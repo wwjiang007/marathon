@@ -41,6 +41,7 @@ class NetworkPartitionIntegrationTest extends AkkaIntegrationFunTest
     mesosCluster.masters.foreach(_.start())
     mesosCluster.agents.foreach(_.start())
     zkServer.start()
+    waitForSSEConnect()
     cleanUp()
   }
 

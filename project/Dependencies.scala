@@ -63,7 +63,8 @@ object Dependencies {
     Test.akkaTestKit % "test",
     Test.junit % "test",
     Test.scalacheck % "test",
-    Test.wixAccordScalatest % "test"
+    Test.wixAccordScalatest % "test",
+    Test.akkaSse % "test"
   ).map(_.excludeAll(excludeSlf4jLog4j12).excludeAll(excludeLog4j).excludeAll(excludeJCL))
 
   val benchmark = Seq(
@@ -80,7 +81,7 @@ object Dependency {
     val Mesos = "1.1.0"
     // Version of Mesos to use in Dockerfile.
     val MesosDebian = "1.1.0-2.0.107.debian81"
-    val Akka = "2.4.13"
+    val Akka = "2.4.17"
     val AsyncAwait = "0.9.6"
     val Spray = "1.3.4"
     val TwitterCommons = "0.0.76"
@@ -123,7 +124,7 @@ object Dependency {
   val akkaActor = "com.typesafe.akka" %% "akka-actor" % V.Akka
   val akkaSlf4j = "com.typesafe.akka" %% "akka-slf4j" % V.Akka
   val akkaStream = "com.typesafe.akka" %% "akka-stream" % V.Akka
-  val akkaHttp = "com.typesafe.akka" %% "akka-http-experimental" % "2.4.11"
+  val akkaHttp = "com.typesafe.akka" %% "akka-http" % "10.0.5"
   val akkaHttpPlayJson = "de.heikoseeberger" %% "akka-http-play-json" % "1.10.1"
   val asyncAwait = "org.scala-lang.modules" %% "scala-async" % V.AsyncAwait
   val sprayClient = "io.spray" %% "spray-client" % V.Spray
@@ -170,5 +171,6 @@ object Dependency {
     val junit = "junit" % "junit" % V.JUnit
     val scalacheck = "org.scalacheck" %% "scalacheck" % V.ScalaCheck
     val wixAccordScalatest = "com.wix" %% "accord-scalatest" % V.WixAccord
+    val akkaSse = "de.heikoseeberger" %% "akka-sse" % "2.0.0"
   }
 }
