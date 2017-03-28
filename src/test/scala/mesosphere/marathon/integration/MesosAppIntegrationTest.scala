@@ -15,6 +15,7 @@ import scala.collection.immutable.Seq
 import scala.concurrent.duration._
 
 @IntegrationTest
+@UnstableTest(issueUrl = "https://jira.mesosphere.com/browse/MARATHON-7162")
 class MesosAppIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonTest {
 
   // Integration tests using docker image provisioning with the Mesos containerizer need to be

@@ -17,6 +17,7 @@ import scala.concurrent.duration._
 import scala.util.control.NonFatal
 
 @SerialIntegrationTest
+@UnstableTest(issueUrl = "https://jira.mesosphere.com/browse/MARATHON-7159")
 class AppDeployIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonTest {
 
   private[this] val log = LoggerFactory.getLogger(getClass)

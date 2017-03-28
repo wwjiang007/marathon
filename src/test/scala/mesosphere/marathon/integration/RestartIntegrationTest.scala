@@ -16,6 +16,7 @@ import scala.collection.immutable
   * while deploying)
   */
 @IntegrationTest
+@UnstableTest(issueUrl = "https://jira.mesosphere.com/browse/MARATHON-7063")
 class RestartIntegrationTest extends AkkaIntegrationTest with MesosClusterTest with ZookeeperServerTest with MarathonFixture {
   import PathId._
   val abdicationLoops = 2

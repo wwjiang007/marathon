@@ -13,6 +13,7 @@ import org.apache.commons.io.FileUtils
 import org.scalatest.concurrent.Eventually
 
 @IntegrationTest
+@UnstableTest(issueUrl = "https://jira.mesosphere.com/browse/MARATHON-7158")
 class ReadinessCheckIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonTest with Eventually {
 
   //clean up state before running the test case

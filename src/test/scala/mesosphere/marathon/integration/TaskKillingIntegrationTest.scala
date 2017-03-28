@@ -7,6 +7,7 @@ import mesosphere.marathon.integration.setup.EmbeddedMarathonTest
 import mesosphere.marathon.state.PathId._
 
 @IntegrationTest
+@UnstableTest(issueUrl = "https://jira.mesosphere.com/browse/MARATHON-7160")
 class TaskKillingIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonTest {
   override val marathonArgs: Map[String, String] = Map("enable_features" -> "task_killing")
 

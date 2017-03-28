@@ -102,6 +102,32 @@ node('JenkinsMarathonCI-Debian8-1-2017-02-23') {
                 allowEmptyArchive: true)
           }
         }
+        stage("4. Run Unstable Tests") {
+            try {
+                timeout(time: 60, unit: 'MINUTES') {
+                    withEnv(['RUN_DOCKER_INTEGRATION_TESTS=true', 'RUN_MESOS_INTEGRATION_TESTS=true']) {
+                        sh "sudo -E sbt -Dsbt.log.format=false clean coverage unstable:test unstable-integration:test coverageReport"
+                    }
+                }
+            } catch (Exception err) {
+                step([ $class: 'GitHubCommitStatusSetter'
+                       , contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: "Velocity Unstable Tests"]
+                ])
+            } finally {
+                junit allowEmptyResults: true, testResults: 'target/test-reports/unstable-integration/**/*.xml'
+                junit allowEmptyResults: true, testResults: 'target/test-reports/unstable/**/*.xml'
+                // scoverage does not allow the configuration of a different output
+                // path: https://github.com/scoverage/sbt-scoverage/issues/211
+                // The archive steps does not allow a different target path. So we
+                // move the files to avoid conflicts with the reports from the unit
+                // test run.
+                sh "sudo mv target/scala-2.11/scoverage-report/ target/scala-2.11/scoverage-report-unstable"
+                sh "sudo mv target/scala-2.11/coverage-report/cobertura.xml target/scala-2.11/coverage-report/cobertura-unstable.xml"
+                archiveArtifacts(
+                        artifacts: 'target/**/coverage-report/cobertura-integration.xml, target/**/scoverage-report-integration/**',
+                        allowEmptyArchive: true)
+            }
+        }
         stage("4. Assemble Runnable Binaries") {
           sh "sudo -E sbt assembly"
           sh "sudo bin/build-distribution"
