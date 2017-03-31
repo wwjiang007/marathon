@@ -3,14 +3,18 @@ package core.storage.store.impl.zk
 
 import akka.Done
 import akka.util.ByteString
+import mesosphere.marathon.core.async.ExecutionContexts
+import mesosphere.marathon.core.base._
 import mesosphere.marathon.stream.Implicits._
 import org.apache.curator.RetryPolicy
 import org.apache.curator.framework.api.{ BackgroundPathable, Backgroundable, Pathable }
 import org.apache.curator.framework.{ CuratorFramework, CuratorFrameworkFactory }
 import org.apache.zookeeper.CreateMode
 import org.apache.zookeeper.data.{ ACL, Stat }
+
 import scala.annotation.tailrec
 import mesosphere.marathon.core.base.LifecycleState
+import org.apache.curator.framework.state.{ ConnectionState, ConnectionStateListener }
 
 import scala.concurrent.Future
 import scala.util.control.NonFatal
@@ -169,10 +173,28 @@ class RichCuratorFramework(val client: CuratorFramework) extends AnyVal {
 }
 
 object RichCuratorFramework {
-  def apply(client: CuratorFramework): RichCuratorFramework = new RichCuratorFramework(client)
+
+  /**
+    * Listen to connection state changes and suicide if the connection to ZooKeeper is lost.
+    */
+  object ConnectionLostListener extends ConnectionStateListener {
+    override def stateChanged(client: CuratorFramework, newState: ConnectionState): Unit = {
+      if (!newState.isConnected) {
+        client.close()
+        Runtime.getRuntime.asyncExit()(ExecutionContexts.global)
+      }
+    }
+  }
+
+  def apply(client: CuratorFramework): RichCuratorFramework = {
+    client.getConnectionStateListenable().addListener(ConnectionLostListener)
+    new RichCuratorFramework(client)
+  }
   def apply(uri: String, retryPolicy: RetryPolicy): RichCuratorFramework = {
     val c = CuratorFrameworkFactory.newClient(uri, retryPolicy)
+    c.getConnectionStateListenable().addListener(ConnectionLostListener)
     c.start()
+
     new RichCuratorFramework(c)
   }
 }
