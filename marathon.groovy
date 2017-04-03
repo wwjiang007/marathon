@@ -90,6 +90,7 @@ def setBuildInfo(displayName, description) {
 
 def checkout_marathon_master() {
   git changelog: false, credentialsId: '4ff09dce-407b-41d3-847a-9e6609dd91b8', poll: false, url: 'git@github.com:mesosphere/marathon.git'
+  sh "git branch | grep -v master | xargs git branch -D"
   sh "sudo git clean -fdx"
   return this
 }
