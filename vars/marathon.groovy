@@ -143,3 +143,39 @@ def unstable_test() {
     junit allowEmptyResults: true, testResults: 'target/test-reports/unstable/**/*.xml'
   }
 }
+
+def assembly() {
+  sh "sudo -E sbt assembly"
+  sh "sudo bin/build-distribution"
+}
+
+def package_binaries() {
+  parallel (
+    "Tar Binaries": {
+      sh """sudo tar -czv -f "target/marathon-${gitCommit}.tgz" \
+              Dockerfile \
+              README.md \
+              LICENSE \
+              bin \
+              examples \
+              docs \
+              target/scala-2.*/marathon-assembly-*.jar
+         """
+    },
+    "Create Debian and Red Hat Package": {
+      sh "sudo rm -rf marathon-pkg && git clone https://github.com/mesosphere/marathon-pkg.git marathon-pkg"
+      dir("marathon-pkg") {
+         // marathon-pkg has marathon as a git module. We've already
+         // checked it out. So let's just symlink.
+         sh "sudo rm -rf marathon && ln -s ../ marathon"
+         sh "sudo make all"
+      }
+    },
+    "Build Docker Image": {
+      // target is in .dockerignore so we just copy the jar before.
+      sh "cp target/*/marathon-assembly-*.jar ."
+      mesosVersion = sh(returnStdout: true, script: "sed -n 's/^.*MesosDebian = \"\\(.*\\)\"/\\1/p' <./project/Dependencies.scala").trim()
+      docker.build("mesosphere/marathon:${gitCommit}", "--build-arg MESOS_VERSION=${mesosVersion} .")
+    }
+   )
+}
