@@ -32,6 +32,4 @@ val coverage: Map[String, String] = lineHits.map { case (file, lineData) =>
 
 case class HMTest(coverage: Map[String, String], result: String = "pass", name: String = "Test Coverage")
 implicit val hmtestFormat = Json.format[HMTest]
-case class HMUnit(unit: Seq[HMTest])
-implicit val hmunitFormat = Json.format[HMUnit]
-println(Json.toJson(HMUnit(Seq(HMTest(coverage)))))
+println(Json.toJson(HMTest(coverage)))
