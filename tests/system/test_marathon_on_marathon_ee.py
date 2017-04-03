@@ -132,7 +132,7 @@ def ensure_service_account():
 def ensure_permissions():
     set_service_account_permissions(MOM_EE_SERVICE_ACCOUNT)
 
-    url = '{}acs/api/v1/acls/dcos:superuser/users/{}'.format(dcos_url(), MOM_EE_SERVICE_ACCOUNT)
+    url = '{}/acs/api/v1/acls/dcos:superuser/users/{}'.format(dcos_url(), MOM_EE_SERVICE_ACCOUNT)
     req = http.get(url)
     assert req.json()['array'][0]['url'] == '/acs/api/v1/acls/dcos:superuser/users/{}/full'.format(MOM_EE_SERVICE_ACCOUNT), "Service account permissions couldn't be set"
 
