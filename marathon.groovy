@@ -94,6 +94,11 @@ def checkout_marathon_master() {
   return this
 }
 
+def clean_git() {
+  sh "git checkout master && git branch | grep -v master | xargs git branch -D || true"
+  return this
+}
+
 // run through compile/lint/docs. Fail if there were format changes after this.
 def compile() {
   withEnv(['RUN_DOCKER_INTEGRATION_TESTS=true', 'RUN_MESOS_INTEGRATION_TESTS=true']) {
@@ -190,3 +195,5 @@ def package_binaries() {
     }
    )
 }
+
+return this
