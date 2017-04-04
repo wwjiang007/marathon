@@ -1,4 +1,4 @@
-if (fileExists 'marathon.groovy') {
+if (fileExists('marathon.groovy')) {
   load('marathon.groovy')
 }
 
