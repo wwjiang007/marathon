@@ -1,7 +1,3 @@
-if (fileExists('marathon.groovy')) {
-  load('marathon.groovy')
-}
-
 /* BEGIN: Block of stuff that we can't have in the library for this job until the patch itself lands - chicken and egg: all in marathon.groovy */
 
 def setBuildInfo(displayName, description) {
@@ -42,6 +38,10 @@ def phabricator(method, args) {
 ansiColor('gnome-terminal') {
   node('JenkinsMarathonCI-Debian8-1-2017-02-23') {
     setBuildInfo("D$REVISION_ID($DIFF_ID) #$BUILD_NUMBER", "<a href=\"https://phabricator.mesosphere.com/D$REVISION_ID\">D$REVISION_ID</a>")
+
+    if (fileExists('marathon.groovy')) {
+      load('marathon.groovy')
+    }
 
     stage("Install Dependencies") {
       install_dependencies()
@@ -119,4 +119,3 @@ ansiColor('gnome-terminal') {
     }
   }
 }
-
