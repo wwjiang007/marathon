@@ -19,7 +19,7 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
     stage("Install Mesos") {
       m.install_mesos()
     }
-    stageWithCommitStatus("1. Compile") {
+    m.stageWithCommitStatus("1. Compile") {
       try {
         m.compile()
       } finally {
