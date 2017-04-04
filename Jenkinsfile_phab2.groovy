@@ -34,79 +34,17 @@ def phabricator(method, args) {
 }
 
 /* END: Block of stuff that can be removed after the patch lands */
-
-ansiColor('gnome-terminal') {
-  node('JenkinsMarathonCI-Debian8-1-2017-02-23') {
-    setBuildInfo("D$REVISION_ID($DIFF_ID) #$BUILD_NUMBER", "<a href=\"https://phabricator.mesosphere.com/D$REVISION_ID\">D$REVISION_ID</a>")
-
-    if (fileExists('marathon.groovy')) {
-      load('marathon.groovy')
-    }
-
-    stage("Install Dependencies") {
-      install_dependencies()
-    }
-    if (env.APPLIED_DIFF == "true") {
-      try {
-        stage("Install Mesos") {
-          install_mesos()
-        }
-        stage("Kill junk processes") {
-          kill_junk()
-        }
-        stage("Compile") {
-          compile()
-        }
-        stage("Test") {
-          try {
-            test()
-          } finally {
-            phabricator_convert_test_coverage()
-            publish_test_coverage("Test Coverage")
-          }
-        }
-        stage("Integration Test") {
-          try {
-            integration_test()
-          } finally {
-            phabricator_convert_test_coverage()
-            publish_test_coverage("Integration Test Coverage")
-          }
-        }
-        stage("Assemble Binaries") {
-          assembly()
-        }
-        stage("Package Binaries") {
-          package_binaries()
-        }
-        stage("Unstable Test") {
-          if (has_unstable_tests()) {
-            try {
-              unstable_test()
-            } catch (Exception err) {
-              phabricator("differential.revision.edit", """ transactions: [{type: "comment", value: "Warning $BUILD_URL has failing unstable tests!"}], objectIdentifier: "D$REVISION_ID" """)
-            } finally {
-              phabricator_convert_test_coverage()
-              publish_test_coverage("Unstable Test Coverage")
-            }
-          } else {
-            echo "No Unstable Tests \u2713"
-          }
-        }
-        stage("Publish Results") {
-          sh "git branch | grep -v master | xargs git branch -D"
-          phabricator_test_results("fail")
-          phabricator("differential.revision.edit", """ transactions: [{type: "accept", value: true}, {type: "comment", value: "Build Succeeded at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
-        }
-      } catch (Exception err) {
-        stage("Publish Results") {
-          sh "git checkout master && git branch | grep -v master | xargs git branch -D || true"
-          phabricator_test_results("fail")
-          phabricator("differential.revision.edit", """ transactions: [{type: "reject", value: true}, {type: "comment", value: "Build Failed at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
-          currentBuild.result = "FAILURE"
-        }
+if (env.APPLIED_DIFF == "true") {
+  ansiColor('gnome-terminal') {
+    node('JenkinsMarathonCI-Debian8-1-2017-02-23') {
+      if (fileExists('marathon.groovy')) {
+        load('marathon.groovy')
       }
-    } else {
+      setBuildInfo("D$REVISION_ID($DIFF_ID) #$BUILD_NUMBER", "<a href=\"https://phabricator.mesosphere.com/D$REVISION_ID\">D$REVISION_ID</a>")
+
+      stage("Install Dependencies") {
+        install_dependencies()
+      }
       stage("Checkout D$REVISION_ID($DIFF_ID)") {
         checkout_marathon_master()
         phabricator_apply_diff("$PHID", "$BUILD_URL", "$REVISION_ID", "$DIFF_ID")
@@ -115,6 +53,70 @@ ansiColor('gnome-terminal') {
         // reload the script.
         jobDsl targets: 'Jenkinsfile_phab2.groovy'
       }
+    }
+  }
+} else {
+  if (fileExists('marathon.groovy')) {
+    load('marathon.groovy')
+  }
+
+  try {
+    stage("Install Mesos") {
+      install_mesos()
+    }
+    stage("Kill junk processes") {
+      kill_junk()
+    }
+    stage("Compile") {
+      compile()
+    }
+    stage("Test") {
+      try {
+        test()
+      } finally {
+        phabricator_convert_test_coverage()
+        publish_test_coverage("Test Coverage")
+      }
+    }
+    stage("Integration Test") {
+      try {
+        integration_test()
+      } finally {
+        phabricator_convert_test_coverage()
+        publish_test_coverage("Integration Test Coverage")
+      }
+    }
+    stage("Assemble Binaries") {
+      assembly()
+    }
+    stage("Package Binaries") {
+      package_binaries()
+    }
+    stage("Unstable Test") {
+      if (has_unstable_tests()) {
+        try {
+          unstable_test()
+        } catch (Exception err) {
+          phabricator("differential.revision.edit", """ transactions: [{type: "comment", value: "Warning $BUILD_URL has failing unstable tests!"}], objectIdentifier: "D$REVISION_ID" """)
+        } finally {
+          phabricator_convert_test_coverage()
+          publish_test_coverage("Unstable Test Coverage")
+        }
+      } else {
+        echo "No Unstable Tests \u2713"
+      }
+    }
+    stage("Publish Results") {
+      sh "git branch | grep -v master | xargs git branch -D"
+      phabricator_test_results("fail")
+      phabricator("differential.revision.edit", """ transactions: [{type: "accept", value: true}, {type: "comment", value: "Build Succeeded at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
+    }
+  } catch (Exception err) {
+    stage("Publish Results") {
+      sh "git checkout master && git branch | grep -v master | xargs git branch -D || true"
+      phabricator_test_results("fail")
+      phabricator("differential.revision.edit", """ transactions: [{type: "reject", value: true}, {type: "comment", value: "Build Failed at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
+      currentBuild.result = "FAILURE"
     }
   }
 }
