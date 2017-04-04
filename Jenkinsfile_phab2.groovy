@@ -113,7 +113,7 @@ ansiColor('gnome-terminal') {
       }
       withEnv(['APPLIED_DIFF=true']) {
         // reload the script.
-        jobDsl targets: 'Jenkinsfile.phab2.groovy'
+        jobDsl targets: 'Jenkinsfile_phab2.groovy'
       }
     }
   }
