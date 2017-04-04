@@ -26,7 +26,7 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
         archiveArtifacts artifacts: 'target/**/scapegoat-report/scapegoat.html', allowEmptyArchive: true
       }
     }
-    stageWithCommitStatus("2. Test") {
+    m.stageWithCommitStatus("2. Test") {
       try {
         m.test()
       } finally {
@@ -37,7 +37,7 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
                 allowEmptyArchive: true)
       }
     }
-    stageWithCommitStatus("3. Test Integration") {
+    m.stageWithCommitStatus("3. Test Integration") {
       try {
         m.integration_test()
       } finally {
