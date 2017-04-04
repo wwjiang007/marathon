@@ -7,10 +7,10 @@ import org.scalatest.concurrent.TimeLimits
 import org.scalatest.time.{ Seconds, Span }
 
 @IntegrationTest
-class MarathonStartupIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonTest with TimeLimits {
+class MarathonStartupIntegrationTest extends AkkaIntegrationTest with MesosClusterTest with ZookeeperServerTest with MarathonFixture with TimeLimits {
 
   "Marathon" should {
-    "fail during start, if the HTTP port is already bound" in {
+    "fail during start, if the HTTP port is already bound" in withMarathon(suiteName){ (marathonServer, facade) =>
       Given(s"a Marathon process already running on port ${marathonServer.httpPort}")
 
       When("starting another Marathon process using an HTTP port that is already bound")
