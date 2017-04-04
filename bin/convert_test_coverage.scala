@@ -1,5 +1,24 @@
 #!/usr/local/bin/amm
 
+/**
+  * Convert test coverage data into the format that Phabricator/Harbormaster understands which is actually a
+  * 'fake' unit test.
+  *
+  * {{{
+  * {
+  *    "name": "Test Coverage"
+  *    "result": "pass"
+  *    "coverage": {
+  *       "file": "NNUCCC"
+  *    }
+  * }
+  * }}}
+  *
+  * N = Not Executable
+  * U = Not Covered
+  * C = Covered
+  */
+
 import $ivy.`com.typesafe.play:play-json_2.11:2.5.12`
 
 import scala.xml.XML
