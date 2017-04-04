@@ -25,7 +25,7 @@ class MarathonStartupIntegrationTest extends AkkaIntegrationTest with EmbeddedMa
       try {
         failAfter(Span(40, Seconds)) {
           conflictingMarathon.exitValue().get should be > 0
-        }
+        } withClue (s"Conflicting Marathon exited with ${conflictingMarathon.exitValue()} instead of an error code > 0.")
       } finally {
         // Destroy process if it did not exit in time.
         conflictingMarathon.stop()
