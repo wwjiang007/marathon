@@ -34,7 +34,7 @@ def phabricator(method, args) {
 }
 
 /* END: Block of stuff that can be removed after the patch lands */
-if (env.APPLIED_DIFF == "true") {
+if ("$APPLIED_DIFF" == "true") {
   ansiColor('gnome-terminal') {
     node('JenkinsMarathonCI-Debian8-1-2017-02-23') {
       if (fileExists('marathon.groovy')) {
