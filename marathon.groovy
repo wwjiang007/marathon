@@ -4,7 +4,7 @@
 // This is particularly useful for tagging things like "Unstable-${TestName}"
 def setJUnitPrefix(prefix, files) {
   // add prefix to qualified classname
-  sh "bash -c 'shopt -s globstar && sed -i \"s/\\(<testcase .*classname=['\\\"]\\)\\([a-z]\\)/\\1${prefix.toUpperCase()}.\\2/g\" $files'"
+  sh """bash -c "shopt -s globstar && sed -i \"s/\\(<testcase .*classname=['\\\"]\\)\\([a-z]\\)/\\1${prefix.toUpperCase()}.\\2/g\" $files" """
   return this
 }
 
@@ -90,7 +90,6 @@ def setBuildInfo(displayName, description) {
 
 def checkout_marathon_master() {
   git changelog: false, credentialsId: '4ff09dce-407b-41d3-847a-9e6609dd91b8', poll: false, url: 'git@github.com:mesosphere/marathon.git'
-  sh "git branch | grep -v master | xargs git branch -D"
   sh "sudo git clean -fdx"
   return this
 }
@@ -107,7 +106,11 @@ def test() {
   try {
     timeout(time: 30, unit: 'MINUTES') {
       withEnv(['RUN_DOCKER_INTEGRATION_TESTS=true', 'RUN_MESOS_INTEGRATION_TESTS=true']) {
-        sh """sudo -E sbt -Dsbt.log.format=false coverage test coverageReport"""
+        STATUS = sh(script: """sudo -E sbt -Dsbt.log.format=false coverage test""", returnStatus: true)
+        sh """sudo -E sbt -Dsbt.log.format=false coverageReport"""
+        if (STATUS != 0) {
+          error "Tests Failed"
+        }
       }
     }
   } finally {
@@ -119,7 +122,11 @@ def integration_test() {
   try {
     timeout(time: 30, unit: 'MINUTES') {
       withEnv(['RUN_DOCKER_INTEGRATION_TESTS=true', 'RUN_MESOS_INTEGRATION_TESTS=true']) {
-        sh """sudo -E sbt -Dsbt.log.format=false '; clean; coverage; integration:test; set coverageFailOnMinimum := false; coverageReport; mesos-simulation/integration:test' """
+        STATUS = sh(script: """sudo -E sbt -Dsbt.log.format=false '; clean; coverage; integration:test; mesos-simulation/integration:test' """, returnStatus: true)
+        sh """sudo -E sbt -Dsbt.log.format=false '; set coverageFailOnMinimum := false; coverageReport'"""
+        if (STATUS != 0) {
+          error "Integration Tests Failed"
+        }
       }
     }
   } finally {
@@ -128,13 +135,16 @@ def integration_test() {
 }
 
 def has_unstable_tests() {
-  "git grep \"@UnstableTest\" | wc -l".execute().text != "0"
+  return sh(script: "git grep \"@UnstableTest\" | wc -l", returnStdout: true) != "0"
 }
+
 def unstable_test() {
   try {
     timeout(time: 60, unit: 'MINUTES') {
       withEnv(['RUN_DOCKER_INTEGRATION_TESTS=true', 'RUN_MESOS_INTEGRATION_TESTS=true']) {
-        sh "sudo -E sbt -Dsbt.log.format=false clean coverage unstable:test unstable-integration:test coverageReport"
+        // ignore the status here.
+        sh(script: "sudo -E sbt -Dsbt.log.format=false clean coverage unstable:test unstable-integration:test", returnStatus: true)
+        sh """sudo -E sbt -Dsbt.log.format=false coverageReport"""
       }
     }
   } finally {
