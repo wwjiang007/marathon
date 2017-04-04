@@ -97,6 +97,10 @@ types:
           [local_port_min, local_port_max] where local_port_min and
           local_port_max are command line options with default values of
           10000 and 20000, respectively.
+      networkName?:
+        type: strings.Name
+        description: |
+          Name of the container network (as specified in the networks section of the app definition) that the application is listening on. Required if hostPort is specified, and multiple container networks are defined.
   DockerContainer:
     type: object
     properties:

@@ -75,4 +75,8 @@ object Network {
     }
     builder.build()
   }
+
+  def networkNames(networks: Seq[Network]): Seq[String] =
+    networks.collect { case ContainerNetwork(name, _) => name }
+
 }

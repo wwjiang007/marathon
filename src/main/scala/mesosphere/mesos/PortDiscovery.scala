@@ -19,10 +19,10 @@ trait PortDiscovery {
       // The run spec uses bridge and user modes with portMappings, use them to create the Port messages.
       // Just like apps, we prefer to generate network-scope=host when there's a hostPort available.
       endpoints.flatMap {
-        case (ep @ Endpoint(_, Some(_), Some(hostPort), _, _)) =>
+        case (ep @ Endpoint(_, Some(_), Some(hostPort), _, _, _)) =>
           val updatedEp = ep.copy(labels = ep.labels + NetworkScope.Host.discovery)
           PortMappingSerializer.toMesosPorts(updatedEp, hostPort)
-        case (ep @ Endpoint(_, Some(containerPort), None, _, _)) =>
+        case (ep @ Endpoint(_, Some(containerPort), None, _, _, _)) =>
           val updatedEp = ep.copy(labels = ep.labels + NetworkScope.Container.discovery)
           PortMappingSerializer.toMesosPorts(updatedEp, containerPort)
         case ep =>

@@ -50,6 +50,15 @@ object ContainerSerializer {
   }
 
   def toMesos(networks: Seq[Network], container: Container, mesosBridgeName: String): mesos.Protos.ContainerInfo = {
+
+    def portMappingToMesos(mapping: PortMapping) = {
+      val portBuilder = mesos.Protos.NetworkInfo.PortMapping.newBuilder()
+        .setContainerPort(mapping.containerPort)
+        .setProtocol(mapping.protocol)
+      mapping.hostPort.foreach(portBuilder.setHostPort)
+      portBuilder.build
+    }
+
     val builder = mesos.Protos.ContainerInfo.newBuilder
 
     // First set type-specific values (for Docker) because the external volume provider
@@ -74,28 +83,30 @@ object ContainerSerializer {
       case dv: DockerVolume => builder.addVolumes(VolumeSerializer.toMesos(dv))
     }
 
-    val networkInfos = networks.withFilter(_ != HostNetwork).map { network =>
-      val (networkName, networkLabels) = network match {
-        case cnet: ContainerNetwork => cnet.name -> cnet.labels.toMesosLabels
-        case bnet: BridgeNetwork => mesosBridgeName -> bnet.labels.toMesosLabels
-        case unsupported => throw new IllegalStateException(s"unsupported networking mode $unsupported")
-      }
+    networks.toIterator
+      .filter(_ != HostNetwork)
+      .map { network =>
+        val (networkName, networkLabels) = network match {
+          case cnet: ContainerNetwork => cnet.name -> cnet.labels.toMesosLabels
+          case bnet: BridgeNetwork => mesosBridgeName -> bnet.labels.toMesosLabels
+          case unsupported => throw new IllegalStateException(s"unsupported networking mode $unsupported")
+        }
 
-      mesos.Protos.NetworkInfo.newBuilder()
-        .addIpAddresses(mesos.Protos.NetworkInfo.IPAddress.getDefaultInstance)
-        .setLabels(networkLabels)
-        .setName(networkName)
-        .addAllPortMappings(container.portMappings.withFilter(_.hostPort.nonEmpty).map { mapping =>
-          // for now, all port mappings are bound to all non-host networks; this will likely change in the future.
-          val portBuilder = mesos.Protos.NetworkInfo.PortMapping.newBuilder()
-            .setContainerPort(mapping.containerPort)
-            .setProtocol(mapping.protocol)
-          mapping.hostPort.foreach(portBuilder.setHostPort)
-          portBuilder.build
-        })
-        .build
-    }
-    builder.addAllNetworkInfos(networkInfos)
+        val portMappings = container.portMappings.withFilter(_.hostPort.nonEmpty).withFilter { mapping =>
+          // if hostPort is specified, networkName is required when more than one container networks are defined.
+          // If networkName is not specified, then there is only one network
+          mapping.networkName.forall(_ == networkName)
+        }
+
+        mesos.Protos.NetworkInfo.newBuilder()
+          .addIpAddresses(mesos.Protos.NetworkInfo.IPAddress.getDefaultInstance)
+          .setLabels(networkLabels)
+          .setName(networkName)
+          .addAllPortMappings(portMappings.map(portMappingToMesos))
+          .build
+      }
+      .foreach(builder.addNetworkInfos)
+
     builder.build
   }
 }
@@ -216,6 +227,7 @@ object PortMappingSerializer {
     mapping.hostPort.foreach(builder.setHostPort)
     mapping.name.foreach(builder.setName)
     mapping.labels.toProto.foreach(builder.addLabels)
+    mapping.networkName.foreach(builder.setNetworkName)
 
     builder.build
   }
@@ -227,7 +239,8 @@ object PortMappingSerializer {
       proto.getServicePort,
       proto.getProtocol,
       if (proto.hasName) Some(proto.getName) else None,
-      proto.getLabelsList.map { p => p.getKey -> p.getValue }(collection.breakOut)
+      proto.getLabelsList.map { p => p.getKey -> p.getValue }(collection.breakOut),
+      if (proto.hasNetworkName) Some(proto.getNetworkName) else None
     )
 
   def toMesos(mapping: Container.PortMapping): Seq[mesos.Protos.ContainerInfo.DockerInfo.PortMapping] = {

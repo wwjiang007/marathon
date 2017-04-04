@@ -41,6 +41,10 @@ types:
         description: |
           Metadata as key/value pair. Possible uses include VIPs,
           per-network-interface binding
+      networkName?:
+        type: strings.Name
+        description: |
+          Name of the container network (as specified in the networks section of the app definition) that the application is listening on. Required if hostPort is specified, and multiple container networks are defined.
 
   NetworkMode:
     type: string

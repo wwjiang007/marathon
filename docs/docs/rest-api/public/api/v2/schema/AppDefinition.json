@@ -37,6 +37,13 @@
             "description": "Name of the service hosted on this port. If provided, it must be unique over all port mappings.",
             "pattern": "^[a-z][a-z0-9-]*$"
           },
+          "networkName": {
+            "type": "string",
+            "description": "Name of the container network (as specified in the networks section of the app definition) that the application is listening on. Required if hostPort is specified, and multiple container networks are defined.",
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+            "minLength": 1,
+            "maxLength": 63
+          },
           "protocol": {
             "type": "string",
             "enum": [

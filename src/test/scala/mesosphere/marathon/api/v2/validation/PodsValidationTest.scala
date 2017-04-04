@@ -94,4 +94,148 @@ class PodsValidationTest extends UnitTest with ResultMatchers with PodsValidatio
     )
     val validator: Validator[Pod] = podDefValidator(Set.empty, SemanticVersion.zero)
   }
+
+  "network validation" when {
+    val validator: Validator[Pod] = podDefValidator(Set.empty, SemanticVersion.zero)
+
+    def podContainer(name: String = "ct1", resources: Resources = Resources(), endpoints: Seq[Endpoint] = Nil) =
+      PodContainer(
+        name = name,
+        resources = resources,
+        endpoints = endpoints)
+
+    def bridgeNetworkedPod(containers: Seq[PodContainer], networkCount: Int = 1) =
+      Pod(
+        id = "/foo",
+        networks = 1.to(networkCount).map(i => Network(mode = NetworkMode.Container, name = Some(i.toString))),
+        containers = containers)
+
+    "multiple container networks are specified for a pod" should {
+
+      // we don't allow this yet because Marathon doesn't yet support per-network port-mapping (and it's not meaningful
+      // for a single host port to map to the same container port on multiple network interfaces).
+      "require networkName for containerPort to hostPort mapping" in {
+        val badApp = bridgeNetworkedPod(
+          Seq(podContainer(endpoints = Seq(Endpoint("endpoint", containerPort = Some(80), hostPort = Option(0))))),
+          networkCount = 2)
+
+        validator(badApp).isFailure shouldBe true
+      }
+
+      "allow portMappings that don't declare hostPort nor networkName" in {
+        val app = bridgeNetworkedPod(
+          Seq(podContainer(endpoints = Seq(Endpoint("endpoint", containerPort = Some(80))))),
+          networkCount = 2)
+        validator(app) shouldBe (aSuccess)
+      }
+
+      "allow portMappings that both declare a hostPort and a networkName" in {
+        val app = bridgeNetworkedPod(
+          Seq(podContainer(endpoints = Seq(
+            Endpoint(
+              "endpoint",
+              hostPort = Option(0),
+              containerPort = Some(80),
+              networkName = Some("1"))))),
+          networkCount = 2)
+        validator(app) shouldBe (aSuccess)
+      }
+    }
+
+    "single container network" should {
+
+      val validNetworks = List(Network(Some("container-network"), NetworkMode.Container))
+      implicit val portMappingValidator =
+        AppValidation.portMappingsValidator(validNetworks)
+
+      "consider a valid portMapping with a name as valid" in {
+        validator(
+          bridgeNetworkedPod(Seq(
+            podContainer(endpoints = Seq(
+              Endpoint(
+                "endpoint",
+                hostPort = Some(80),
+                containerPort = Some(80),
+                networkName = Some("1"))))))) shouldBe (aSuccess)
+      }
+
+      "consider a portMapping with no name as valid" in {
+        validator(
+          bridgeNetworkedPod(Seq(
+            podContainer(endpoints = Seq(
+              Endpoint(
+                "endpoint",
+                hostPort = Some(80),
+                containerPort = Some(80),
+                networkName = None)))))) shouldBe (aSuccess)
+      }
+
+      "maybe consider a portMapping without hostport as valid" in {
+        validator(
+          bridgeNetworkedPod(Seq(
+            podContainer(endpoints = Seq(
+              Endpoint(
+                "endpoint",
+                hostPort = None,
+                containerPort = Some(80),
+                networkName = None)))))) shouldBe (aSuccess)
+      }
+
+      "consider portMapping with zero hostport as valid" in {
+        validator(
+          bridgeNetworkedPod(Seq(
+            podContainer(endpoints = Seq(
+              Endpoint(
+                "endpoint",
+                containerPort = Some(80),
+                hostPort = Some(0))))))) shouldBe (aSuccess)
+      }
+
+      "consider portMapping with a matching network name as valid" in {
+        validator(
+          bridgeNetworkedPod(Seq(
+            podContainer(endpoints = Seq(
+              Endpoint(
+                "endpoint",
+                containerPort = Some(80),
+                hostPort = Some(80),
+                networkName = Some("1"))))))) shouldBe (aSuccess)
+      }
+
+      "consider portMapping with a non-matching network name as invalid" in {
+        val result = validator(
+          bridgeNetworkedPod(Seq(
+            podContainer(endpoints = Seq(
+              Endpoint(
+                "endpoint",
+                containerPort = Some(80),
+                hostPort = Some(80),
+                networkName = Some("invalid-network-name")))))))
+        result.isFailure shouldBe true
+      }
+
+      "consider portMapping without networkName nor hostPort as valid" in {
+        validator(
+          bridgeNetworkedPod(Seq(
+            podContainer(endpoints = Seq(
+              Endpoint(
+                "endpoint",
+                containerPort = Some(80),
+                hostPort = None,
+                networkName = None)))))) shouldBe (aSuccess)
+      }
+    }
+
+    "general port validation" in {
+      validator(
+        bridgeNetworkedPod(Seq(
+          podContainer(endpoints = Seq(
+            Endpoint(
+              "name",
+              hostPort = Some(123)),
+            Endpoint(
+              "name",
+              hostPort = Some(123))))))).isFailure shouldBe true
+    }
+  }
 }

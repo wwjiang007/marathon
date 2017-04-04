@@ -76,36 +76,41 @@ trait PodsValidation {
     }
   }
 
-  def endpointValidator(networks: Seq[Network]) = validator[Endpoint] { endpoint =>
-    // TODO RAML-generated rules should catch these simple things
-    endpoint.name.length is between(1, 63)
-    endpoint.name should matchRegexFully(NamePattern)
-    endpoint.containerPort.getOrElse(1) is between(1, 65535)
-    endpoint.hostPort.getOrElse(0) is between(0, 65535)
-
-    // host-mode networking implies that hostPort is required
-    endpoint.hostPort is isTrue("is required when using host-mode networking") { hp =>
-      if (networks.exists(_.mode == NetworkMode.Host)) hp.nonEmpty
-      else true
+  def endpointValidator(networks: Seq[Network]) = {
+    val networkNames = networks.flatMap(_.name)
+    val hostPortRequiresNetworkName = validator[Endpoint] { endpoint =>
+      (endpoint.networkName is notEmpty) or (endpoint.hostPort is empty)
     }
 
-    // host-mode networking implies that containerPort is disallowed
-    endpoint.containerPort is isTrue("is not allowed when using host-mode networking") { cp =>
-      if (networks.exists(_.mode == NetworkMode.Host)) cp.isEmpty
-      else true
+    val normalValidation = validator[Endpoint] { endpoint =>
+      endpoint.networkName is optional(oneOf(networkNames: _*))
+
+      // host-mode networking implies that hostPort is required
+      endpoint.hostPort is isTrue("is required when using host-mode networking") { hp =>
+        if (networks.exists(_.mode == NetworkMode.Host)) hp.nonEmpty
+        else true
+      }
+
+      // host-mode networking implies that containerPort is disallowed
+      endpoint.containerPort is isTrue("is not allowed when using host-mode networking") { cp =>
+        if (networks.exists(_.mode == NetworkMode.Host)) cp.isEmpty
+        else true
+      }
+
+      // container-mode networking implies that containerPort is required
+      endpoint.containerPort is isTrue("is required when using container-mode networking") { cp =>
+        if (networks.exists(_.mode == NetworkMode.Container)) cp.nonEmpty
+        else true
+      }
+
+      // protocol is an optional field, so we really don't need to validate that is empty/non-empty
+      // but we should validate that it only contains distinct items
+      endpoint.protocol is isTrue ("Duplicate protocols within the same endpoint are not allowed") { proto =>
+        proto == proto.distinct
+      }
     }
 
-    // container-mode networking implies that containerPort is required
-    endpoint.containerPort is isTrue("is required when using container-mode networking") { cp =>
-      if (networks.exists(_.mode == NetworkMode.Container)) cp.nonEmpty
-      else true
-    }
-
-    // protocol is an optional field, so we really don't need to validate that is empty/non-empty
-    // but we should validate that it only contains distinct items
-    endpoint.protocol is isTrue ("Duplicate protocols within the same endpoint are not allowed") { proto =>
-      proto == proto.distinct
-    }
+    normalValidation and implied(networks.count(_.mode == NetworkMode.Container) > 1)(hostPortRequiresNetworkName)
   }
 
   val imageValidator = validator[Image] { image =>
