@@ -102,7 +102,7 @@ def clean_git() {
 }
 
 // run through compile/lint/docs. Fail if there were format changes after this.
-def compile(label, reportStatus) {
+def compile() {
   withEnv(['RUN_DOCKER_INTEGRATION_TESTS=true', 'RUN_MESOS_INTEGRATION_TESTS=true']) {
     sh "sudo -E sbt -Dsbt.log.format=false clean scapegoat doc coverage test:compile"
     sh """if git diff --quiet; then echo 'No format issues detected'; else echo 'Patch has Format Issues'; exit 1; fi"""
