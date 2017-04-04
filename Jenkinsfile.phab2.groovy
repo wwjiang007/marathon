@@ -100,10 +100,9 @@ ansiColor('gnome-terminal') {
         }
       } catch (Exception err) {
         stage("Publish Results") {
-          sh "git branch | grep -v master | xargs git branch -D"
+          sh "git checkout master && git branch | grep -v master | xargs git branch -D || true"
           phabricator_test_results("fail")
-          phabricator("differential.revision.edit", """ transactions: [{type: "reject", value: true}], objectIdentifier: "D$REVISION_ID" """)
-          phabricator("differential.revision.edit", """ transactions: [{type: "comment", value: "Build Failed at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
+          phabricator("differential.revision.edit", """ transactions: [{type: "reject", value: true}, {type: "comment", value: "Build Failed at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
           currentBuild.result = "FAILURE"
         }
       }
