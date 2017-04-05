@@ -4,7 +4,7 @@ package integration
 import mesosphere.AkkaIntegrationTest
 import mesosphere.marathon.integration.setup._
 import org.scalatest.concurrent.{ Eventually, TimeLimits }
-import org.scalatest.time.{ Seconds, Span }
+//import org.scalatest.time.{ Seconds, Span }
 
 @IntegrationTest
 class MarathonStartupIntegrationTest extends AkkaIntegrationTest
@@ -28,15 +28,15 @@ class MarathonStartupIntegrationTest extends AkkaIntegrationTest
 
       Then("The Marathon process should exit with code > 0")
       // Let's try and see if we get the deadlock.
-  //   try {
-        eventually {
-          conflictingMarathon.isRunning() should be(false)
-        } withClue ("The conflicting Marathon did not suicide.")
-        conflictingMarathon.exitValue().get should be > 0 withClue (s"Conflicting Marathon exited with ${conflictingMarathon.exitValue()} instead of an error code > 0.")
-  //   } finally {
-  //     // Destroy process if it did not exit in time.
-  //     conflictingMarathon.stop()
-  //   }
+      //   try {
+      eventually {
+        conflictingMarathon.isRunning() should be(false)
+      } withClue ("The conflicting Marathon did not suicide.")
+      conflictingMarathon.exitValue().get should be > 0 withClue (s"Conflicting Marathon exited with ${conflictingMarathon.exitValue()} instead of an error code > 0.")
+      //   } finally {
+      //     // Destroy process if it did not exit in time.
+      //     conflictingMarathon.stop()
+      //   }
     }
   }
 }

@@ -7,8 +7,9 @@ import mesosphere.marathon.core.async.ExecutionContexts
 import mesosphere.marathon.core.base._
 import mesosphere.marathon.stream.Implicits._
 import org.apache.curator.RetryPolicy
-import org.apache.curator.framework.api.{ BackgroundPathable, Backgroundable, Pathable }
 import org.apache.curator.framework.{ CuratorFramework, CuratorFrameworkFactory }
+import org.apache.curator.framework.api.{ BackgroundPathable, Backgroundable, Pathable }
+import org.apache.curator.framework.imps.CuratorFrameworkState
 import org.apache.zookeeper.CreateMode
 import org.apache.zookeeper.data.{ ACL, Stat }
 
@@ -130,7 +131,8 @@ class RichCuratorFramework(val client: CuratorFramework) extends AnyVal {
     }
   }
 
-  private def build[A <: Backgroundable[_], B](builder: A, future: ZkFuture[B])(f: A => Unit): Future[B] = {
+  private def build[A <: Backgroundable[_], B](builder: A, future: ZkFuture[B])(f: A => Unit): Future[B] = synchronized {
+    if (client.getState() == CuratorFrameworkState.STOPPED) future.fail(new IllegalStateException("Curator connection to ZooKeeper has been stopped."))
     try {
       builder.inBackground(future)
       f(builder)
