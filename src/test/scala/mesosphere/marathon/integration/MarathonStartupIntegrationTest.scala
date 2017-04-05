@@ -3,11 +3,16 @@ package integration
 
 import mesosphere.AkkaIntegrationTest
 import mesosphere.marathon.integration.setup._
-import org.scalatest.concurrent.TimeLimits
+import org.scalatest.concurrent.{ Eventually, TimeLimits }
 import org.scalatest.time.{ Seconds, Span }
 
 @IntegrationTest
-class MarathonStartupIntegrationTest extends AkkaIntegrationTest with MesosClusterTest with ZookeeperServerTest with MarathonFixture with TimeLimits {
+class MarathonStartupIntegrationTest extends AkkaIntegrationTest
+    with MesosClusterTest
+    with ZookeeperServerTest
+    with MarathonFixture
+    with TimeLimits
+    with Eventually {
 
   "Marathon" should {
     "fail during start, if the HTTP port is already bound" in withMarathon(suiteName){ (marathonServer, facade) =>
@@ -22,14 +27,16 @@ class MarathonStartupIntegrationTest extends AkkaIntegrationTest with MesosClust
       val conflictingMarathon = LocalMarathon(true, s"$suiteName-conflict", marathonServer.masterUrl, marathonServer.zkUrl, args)
 
       Then("The Marathon process should exit with code > 0")
-      try {
-        failAfter(Span(40, Seconds)) {
-          conflictingMarathon.exitValue().get should be > 0
-        } withClue (s"Conflicting Marathon exited with ${conflictingMarathon.exitValue()} instead of an error code > 0.")
-      } finally {
-        // Destroy process if it did not exit in time.
-        conflictingMarathon.stop()
-      }
+      // Let's try and see if we get the deadlock.
+  //   try {
+        eventually {
+          conflictingMarathon.isRunning() should be(false)
+        } withClue ("The conflicting Marathon did not suicide.")
+        conflictingMarathon.exitValue().get should be > 0 withClue (s"Conflicting Marathon exited with ${conflictingMarathon.exitValue()} instead of an error code > 0.")
+  //   } finally {
+  //     // Destroy process if it did not exit in time.
+  //     conflictingMarathon.stop()
+  //   }
     }
   }
 }
