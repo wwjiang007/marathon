@@ -108,7 +108,7 @@ class RestartIntegrationTest extends AkkaIntegrationTest with MesosClusterTest w
     val appV2 = f.marathon.updateApp(appId, updateApp)
 
     And("new tasks are started and running")
-    val updated = f.waitForTasks(appId, 4) withClue(s"The new tasks for ${appId} did not start running.") //make sure there are 2 additional tasks
+    val updated = f.waitForTasks(appId, 4) withClue (s"The new tasks for ${appId} did not start running.") //make sure there are 2 additional tasks
 
     val newVersion = appV2.value.version.toString
     val updatedTasks = updated.filter(_.version.contains(newVersion))
