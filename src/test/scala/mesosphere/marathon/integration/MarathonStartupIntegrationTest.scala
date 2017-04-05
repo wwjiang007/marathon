@@ -25,16 +25,15 @@ class MarathonStartupIntegrationTest extends AkkaIntegrationTest
       val conflictingMarathon = LocalMarathon(true, s"$suiteName-conflict", marathonServer.masterUrl, marathonServer.zkUrl, args)
 
       Then("The Marathon process should exit with code > 0")
-      // Let's try and see if we get the deadlock.
-      //   try {
-      eventually {
-        conflictingMarathon.isRunning() should be(false)
-      } withClue ("The conflicting Marathon did not suicide.")
-      conflictingMarathon.exitValue().get should be > 0 withClue (s"Conflicting Marathon exited with ${conflictingMarathon.exitValue()} instead of an error code > 0.")
-      //   } finally {
-      //     // Destroy process if it did not exit in time.
-      //     conflictingMarathon.stop()
-      //   }
+      try {
+        eventually {
+          conflictingMarathon.isRunning() should be(false)
+        } withClue ("The conflicting Marathon did not suicide.")
+        conflictingMarathon.exitValue().get should be > 0 withClue (s"Conflicting Marathon exited with ${conflictingMarathon.exitValue()} instead of an error code > 0.")
+      } finally {
+        // Destroy process if it did not exit in time.
+        conflictingMarathon.stop()
+      }
     }
   }
 }
