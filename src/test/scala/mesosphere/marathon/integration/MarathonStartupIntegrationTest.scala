@@ -3,15 +3,13 @@ package integration
 
 import mesosphere.AkkaIntegrationTest
 import mesosphere.marathon.integration.setup._
-import org.scalatest.concurrent.{ Eventually, TimeLimits }
-//import org.scalatest.time.{ Seconds, Span }
+import org.scalatest.concurrent.Eventually
 
 @IntegrationTest
 class MarathonStartupIntegrationTest extends AkkaIntegrationTest
     with MesosClusterTest
     with ZookeeperServerTest
     with MarathonFixture
-    with TimeLimits
     with Eventually {
 
   "Marathon" should {
