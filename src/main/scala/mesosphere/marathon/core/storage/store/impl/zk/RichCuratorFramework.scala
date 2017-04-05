@@ -34,11 +34,11 @@ class RichCuratorFramework(val client: CuratorFramework) extends AnyVal {
     new RichCuratorFramework(client.usingNamespace(namespace))
   }
 
-  def close(): Unit = {
+  def close(): Unit = synchronized {
     client.close()
   }
 
-  def start(): Unit = {
+  def start(): Unit = synchronized {
     client.start()
   }
 
