@@ -25,15 +25,15 @@ class RichCuratorFrameworkTest extends UnitTest with ZookeeperServerTest {
   lazy val client = richClient.client
 
   after {
-    client(_.getChildren).forPath("/").map { child =>
-      client(_.delete()).deletingChildrenIfNeeded().forPath(s"/$child")
+    client.getChildren.forPath("/").map { child =>
+      client.delete().deletingChildrenIfNeeded().forPath(s"/$child")
     }
   }
 
   "RichCuratorFramework" should {
     "be able to create a simple node" in {
       richClient.create("/1").futureValue should equal("/1")
-      val childrenData = client(_.children("/")).futureValue
+      val childrenData = client.children("/").futureValue
       childrenData.children should contain only "1"
       childrenData.path should equal("/")
       childrenData.stat.getVersion should equal(0)
@@ -42,8 +42,8 @@ class RichCuratorFrameworkTest extends UnitTest with ZookeeperServerTest {
     }
     "be able to create a simple node with data" in {
       richClient.create("/2", data = Some(ByteString("abc"))).futureValue should equal("/2")
-      client(_.data("/2")).futureValue.data should equal(ByteString("abc"))
-      val childrenData = client(_.children("/")).futureValue
+      client.data("/2").futureValue.data should equal(ByteString("abc"))
+      val childrenData = client.children("/").futureValue
       childrenData.children should contain only "2"
       childrenData.path should equal("/")
       childrenData.stat.getVersion should equal(0)

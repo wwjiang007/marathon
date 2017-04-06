@@ -6,7 +6,6 @@ import akka.util.ByteString
 import mesosphere.marathon.core.async.ExecutionContexts
 import mesosphere.marathon.core.base._
 import mesosphere.marathon.stream.Implicits._
-import mesosphere.marathon.util.Lock
 import org.apache.curator.RetryPolicy
 import org.apache.curator.framework.{ CuratorFramework, CuratorFrameworkFactory }
 import org.apache.curator.framework.api.{ BackgroundPathable, Backgroundable, Pathable }
@@ -28,19 +27,20 @@ import scala.util.control.NonFatal
   * While an implicit conversion is provided, the compiler doesn't appear to be able to resolve it automatically
   * if named parameters are given. Instead, it is advisable to create it explicitly.
   *
-  * @param c The underlying Curator client.
+  * @param client The underlying Curator client.
   */
-class RichCuratorFramework(c: CuratorFramework) {
-
-  val client = Lock(c)
-
+class RichCuratorFramework(val client: CuratorFramework) extends AnyVal {
   def usingNamespace(namespace: String): RichCuratorFramework = {
-    new RichCuratorFramework(client(_.usingNamespace(namespace)))
+    new RichCuratorFramework(client.usingNamespace(namespace))
   }
 
-  def close(): Unit = client(_.close())
+  def close(): Unit = synchronized {
+    client.close()
+  }
 
-  def start(): Unit = client(_.start())
+  def start(): Unit = synchronized {
+    client.start()
+  }
 
   def create(
     path: String,
@@ -51,7 +51,7 @@ class RichCuratorFramework(c: CuratorFramework) {
     createMode: CreateMode = CreateMode.PERSISTENT,
     creatingParentsIfNeeded: Boolean = false,
     creatingParentContainersIfNeeded: Boolean = false): Future[String] =
-    build(client(_.create()), ZkFuture.create) { builder =>
+    build(client.create(), ZkFuture.create) { builder =>
       if (compress) builder.compressed()
       if (`protected`) builder.withProtection()
       if (creatingParentsIfNeeded) builder.creatingParentsIfNeeded()
@@ -68,7 +68,7 @@ class RichCuratorFramework(c: CuratorFramework) {
     version: Option[Int] = None,
     guaranteed: Boolean = false,
     deletingChildrenIfNeeded: Boolean = false): Future[String] =
-    build(client(_.delete()), ZkFuture.delete) { builder =>
+    build(client.delete(), ZkFuture.delete) { builder =>
       if (deletingChildrenIfNeeded) builder.deletingChildrenIfNeeded()
       if (guaranteed) builder.guaranteed()
       if (deletingChildrenIfNeeded) builder.deletingChildrenIfNeeded()
@@ -79,7 +79,7 @@ class RichCuratorFramework(c: CuratorFramework) {
   def exists(
     path: String,
     creatingParentContainersIfNeeded: Boolean = false): Future[ExistsResult] =
-    build(client(_.checkExists()), ZkFuture.exists) { builder =>
+    build(client.checkExists(), ZkFuture.exists) { builder =>
       if (creatingParentContainersIfNeeded) builder.creatingParentContainersIfNeeded()
       builder.forPath(path)
     }
@@ -87,7 +87,7 @@ class RichCuratorFramework(c: CuratorFramework) {
   def data(
     path: String,
     decompressed: Boolean = false): Future[GetData] =
-    build(client(_.getData), ZkFuture.data) { builder =>
+    build(client.getData, ZkFuture.data) { builder =>
       if (decompressed) builder.decompressed()
       builder.forPath(path)
     }
@@ -97,31 +97,31 @@ class RichCuratorFramework(c: CuratorFramework) {
     data: ByteString,
     compressed: Boolean = false,
     version: Option[Int] = None): Future[SetData] =
-    build(client(_.setData()), ZkFuture.setData) { builder =>
+    build(client.setData(), ZkFuture.setData) { builder =>
       version.foreach(builder.withVersion)
       if (compressed) builder.compressed()
       builder.forPath(path, data.toArray)
     }
 
   def children(path: String): Future[Children] =
-    build(client(_.getChildren), ZkFuture.children) { builder =>
+    build(client.getChildren, ZkFuture.children) { builder =>
       builder.forPath(path)
     }
 
   def sync(path: String): Future[Option[Stat]] =
-    build(client(_.sync()), ZkFuture.sync) { builder =>
+    build(client.sync(), ZkFuture.sync) { builder =>
       builder.forPath(path)
     }
 
   def acl(path: String): Future[Seq[ACL]] =
-    build(client(_.getACL), ZkFuture.acl) { builder =>
+    build(client.getACL, ZkFuture.acl) { builder =>
       builder.forPath(path)
     }
 
   @SuppressWarnings(Array("AsInstanceOf"))
   def setAcl(path: String, acls: Seq[ACL],
     version: Option[Int] = None): Future[Done] = {
-    val builder = client(_.setACL())
+    val builder = client.setACL()
     // sadly, the builder doesn't export BackgroundPathable, but the impl is.
     build(builder.asInstanceOf[BackgroundPathable[_]], ZkFuture.setAcl) { _ =>
       version.foreach(builder.withVersion)
@@ -131,8 +131,8 @@ class RichCuratorFramework(c: CuratorFramework) {
     }
   }
 
-  private def build[A <: Backgroundable[_], B](builder: A, future: ZkFuture[B])(f: A => Unit): Future[B] = client { c =>
-    if (c.getState() == CuratorFrameworkState.STOPPED) future.fail(new IllegalStateException("Curator connection to ZooKeeper has been stopped."))
+  private def build[A <: Backgroundable[_], B](builder: A, future: ZkFuture[B])(f: A => Unit): Future[B] = synchronized {
+    if (client.getState() == CuratorFrameworkState.STOPPED) future.fail(new IllegalStateException("Curator connection to ZooKeeper has been stopped."))
     try {
       builder.inBackground(future)
       f(builder)
@@ -144,7 +144,7 @@ class RichCuratorFramework(c: CuratorFramework) {
   }
 
   override def toString: String =
-    s"CuratorFramework(${client(_.getZookeeperClient.getCurrentConnectionString)}/${client(_.getNamespace)})"
+    s"CuratorFramework(${client.getZookeeperClient.getCurrentConnectionString}/${client.getNamespace})"
 
   /**
     * Block the current thread until Zookeeper connection is established or until configured zookeeper connection
@@ -155,7 +155,7 @@ class RichCuratorFramework(c: CuratorFramework) {
     */
   @SuppressWarnings(Array("CatchFatal"))
   def blockUntilConnected(lifecycleState: LifecycleState): Unit = {
-    val timeoutAt: Long = System.currentTimeMillis() + client(_.getZookeeperClient.getConnectionTimeoutMs)
+    val timeoutAt: Long = System.currentTimeMillis() + client.getZookeeperClient.getConnectionTimeoutMs
 
     @tailrec def poll(): Unit = {
       if (System.currentTimeMillis > timeoutAt)
@@ -163,7 +163,7 @@ class RichCuratorFramework(c: CuratorFramework) {
       else if (!lifecycleState.isRunning)
         throw new InterruptedException("Not waiting for connection to zookeeper; Marathon is shutting down")
       else try {
-        client(_.blockUntilConnected(1, java.util.concurrent.TimeUnit.SECONDS))
+        client.blockUntilConnected(1, java.util.concurrent.TimeUnit.SECONDS)
       } catch {
         case _: InterruptedException =>
           poll()
