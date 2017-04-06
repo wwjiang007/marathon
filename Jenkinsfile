@@ -57,7 +57,7 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
       m.assembly()
     }
     stage("5. Package Binaries") {
-      m.package()
+      m.package_binaries()
     }
     stage("6. Run Unstable Tests") {
       if (m.has_unstable_tests()) {
