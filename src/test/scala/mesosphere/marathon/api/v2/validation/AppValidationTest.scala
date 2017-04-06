@@ -1,17 +1,14 @@
 package mesosphere.marathon
 package api.v2.validation
 
-import com.wix.accord.scalatest.ResultMatchers
 import mesosphere.{ UnitTest, ValidationTestLike }
 import mesosphere.marathon.raml.{ App, Container, ContainerPortMapping, EngineType, Network, NetworkMode }
 
-class AppValidationTest extends UnitTest with ResultMatchers with ValidationTestLike {
-
-  import Normalization._
+class AppValidationTest extends UnitTest with ValidationTestLike {
 
   "canonical app validation" when {
 
-    val basicValidator = AppValidation.validateCanonicalAppAPI(Set.empty)
+    implicit val basicValidator = AppValidation.validateCanonicalAppAPI(Set.empty)
 
     "multiple container networks are specified for an app" should {
 
@@ -22,13 +19,13 @@ class AppValidationTest extends UnitTest with ResultMatchers with ValidationTest
       "disallow containerPort to hostPort mapping" in {
         val ct = Container(`type` = EngineType.Mesos, portMappings = Some(Seq(ContainerPortMapping(hostPort = Option(0)))))
         val badApp = app.copy(container = Some(ct))
-        basicValidator(badApp).normalize should failWith("/container/portMappings(0)/hostPort" -> "must be empty")
+        shouldViolate(badApp, "/container/portMappings(0)/hostPort", "must be empty")
       }
 
       "allow portMappings that don't declare hostPort" in {
         val ct = Container(`type` = EngineType.Mesos, portMappings = Some(Seq(ContainerPortMapping())))
-        val badApp = app.copy(container = Some(ct))
-        basicValidator(badApp) should be(aSuccess)
+        val goodApp = app.copy(container = Some(ct))
+        shouldSucceed(goodApp)
       }
     }
   }

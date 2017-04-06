@@ -1,9 +1,8 @@
 package mesosphere.marathon
 package api.v2.json
 
-import com.wix.accord._
 import mesosphere.marathon.api.JsonTestHelper
-import mesosphere.marathon.api.v2.{ AppNormalization, AppsResource, ValidationHelper }
+import mesosphere.marathon.api.v2.{ AppNormalization, AppsResource }
 import mesosphere.marathon.core.health.{ MarathonHttpHealthCheck, MesosCommandHealthCheck, MesosHttpHealthCheck, PortReference }
 import mesosphere.marathon.core.plugin.PluginManager
 import mesosphere.marathon.core.pod.{ BridgeNetwork, ContainerNetwork }
@@ -21,7 +20,7 @@ import scala.concurrent.duration._
 
 class AppDefinitionTest extends UnitTest with ValidationTestLike {
   val enabledFeatures = Set("secrets")
-  val validAppDefinition = AppDefinition.validAppDefinition(enabledFeatures)(PluginManager.None)
+  implicit val validAppDefinition = AppDefinition.validAppDefinition(enabledFeatures)(PluginManager.None)
 
   private[this] def appNormalization(app: raml.App): raml.App =
     AppsResource.appNormalization(
@@ -35,35 +34,6 @@ class AppDefinitionTest extends UnitTest with ValidationTestLike {
 
   "AppDefinition" should {
     "Validation" in {
-      def shouldViolate(app: AppDefinition, path: String, template: String)(implicit validAppDef: Validator[AppDefinition] = validAppDefinition): Unit = {
-        validate(app) match {
-          case Success => fail(s"expected failure '$template'")
-          case f: Failure =>
-            val violations = ValidationHelper.getAllRuleConstrains(f)
-
-            assert(
-              violations.exists { v =>
-                v.path.contains(path) && v.message == template
-              },
-              s"Violations:\n${violations.mkString}"
-            )
-        }
-      }
-
-      def shouldNotViolate(app: AppDefinition, path: String, template: String)(implicit validAppDef: Validator[AppDefinition] = validAppDefinition): Unit = {
-        validate(app) match {
-          case Success =>
-          case f: Failure =>
-            val violations = ValidationHelper.getAllRuleConstrains(f)
-            assert(
-              !violations.exists { v =>
-                v.path.contains(path) && v.message == template
-              },
-              s"Violations:\n${violations.mkString}"
-            )
-        }
-      }
-
       var app = AppDefinition(id = "a b".toRootPath)
       val idError = "must fully match regular expression '^(([a-z0-9]|[a-z0-9][a-z0-9\\-]*[a-z0-9])\\.)*([a-z0-9]|[a-z0-9][a-z0-9\\-]*[a-z0-9])|(\\.|\\.\\.)$'"
       MarathonTestHelper.validateJsonSchema(app, false)

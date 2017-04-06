@@ -57,7 +57,7 @@ trait PodsValidation {
           (argv.size should be > 0)(argv.size)
       }
     } else {
-      Failure(Set(RuleViolation(v1, s"Mesos Master ($mesosMasterVersion) does not support Command Health Checks", None)))
+      Failure(Set(RuleViolation(v1, s"Mesos Master ($mesosMasterVersion) does not support Command Health Checks")))
     }
   }
 
@@ -154,7 +154,7 @@ trait PodsValidation {
   val scalingValidator: Validator[PodScalingPolicy] = new Validator[PodScalingPolicy] {
     override def apply(v1: PodScalingPolicy): Result = v1 match {
       case fsf: FixedPodScalingPolicy => fixedPodScalingPolicyValidator(fsf)
-      case _ => Failure(Set(RuleViolation(v1, "Not a fixed scaling policy", None)))
+      case _ => Failure(Set(RuleViolation(v1, "Not a fixed scaling policy")))
     }
   }
 
