@@ -56,7 +56,7 @@ def m
 /* END: Block of stuff that can be removed after the patch lands */
 
 ansiColor('gnome-terminal') {
-  node('JenkinsMarathonCI-Debian8-2017-03-21') {
+  node('JenkinsMarathonCI-Debian8-2017-02-23') {
     if (fileExists('marathon.groovy')) {
       m = load('marathon.groovy')
     }
