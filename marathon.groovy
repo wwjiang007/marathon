@@ -10,12 +10,10 @@ def ignore_error(block) {
 }
 
 // Add a prefix to all of the JUnit result files listed
-// This is particularly useful for tagging things like "Unstable-${TestName}"
-def setJUnitPrefix(prefix, files) {
+// This is particularly useful for tagging things like "UNSTABLE.${TestName}"
+def mark_unstable_results(dirs) {
   // add prefix to qualified classname
-  sh """bash -c "shopt -s globstar && sed -i \"s/\\(<testcase .*classname=['\\\"]\\)\\([a-z]\\)/\\1${
-    prefix.toUpperCase()
-  }.\\2/g\" $files" """
+  sh """bin/mark_unstable_results.scala $dirs"""
   return this
 }
 
@@ -42,10 +40,8 @@ def phabricator_convert_test_coverage() {
 }
 
 // Publish the test coverage information into the build.
-// Currently, none of the methods for reporting this actually work
+// When we finally have the publish_html method, this will hopefully work.
 def publish_test_coverage(name) {
-  //currentBuild.description += "<h3>$name</h3>"
-  //currentBuild.description += readFile("target/scala-2.11/scoverage-report/index.html")
   //publishHtml([allowMissing: true, alwaysLinkToLastBuild: false, keepAll: true, reportDir: 'target/scoverage-report', reportFiles: 'index.html', reportName: "Test Coverage"])
   return this
 }
@@ -169,8 +165,7 @@ def unstable_test() {
       }
     }
   } finally {
-    setJUnitPrefix("Unstable", "target/test-reports/unstable-integration/**/*.xml")
-    setJUnitPrefix("Unstable", "target/test-reports/unstable/**/*.xml")
+    mark_unstable_results("target/test-reports/unstable-integration target/test-reports/unstable")
     junit allowEmptyResults: true, testResults: 'target/test-reports/unstable-integration/**/*.xml'
     junit allowEmptyResults: true, testResults: 'target/test-reports/unstable/**/*.xml'
   }
