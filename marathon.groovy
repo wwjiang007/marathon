@@ -1,5 +1,14 @@
 // Libraries of methods for testing Marathon in jenkins
 
+def ignore_error(block) {
+  try {
+    block()
+  } catch(err) {
+
+  }
+  return this
+}
+
 // Add a prefix to all of the JUnit result files listed
 // This is particularly useful for tagging things like "Unstable-${TestName}"
 def setJUnitPrefix(prefix, files) {
@@ -14,14 +23,14 @@ def setJUnitPrefix(prefix, files) {
 // the given jq arguments wrapped in a json object.
 // e.g. phabricator("differential.revision.edit", """ transactions: [{type: "comment", "value": "Some comment"}], objectIdentifier: "D1" """)
 def phabricator(method, args) {
-  sh "jq -n '{ $args }' | arc call-conduit $method || true"
+  sh "jq -n '{ $args }' | arc call-conduit $method"
   return this
 }
 
 // Report all the test results for the given PHID with the given status to Harbormaster.
 // PHID is expected to be set as an environment variable
 def phabricator_test_results(status) {
-  sh """jq -s add '{buildTargetPHID: "$PHID", type: "$status", unit: [.[] * .[]] }' target/phabricator-test-reports/* | arc call-conduit harbormaster.sendmessage """
+  sh """jq -s add '{buildTargetPHID: "$PHID", type: "$status", unit: [.[] * .[]] }' target/phabricator-test-reports/*.json | arc call-conduit harbormaster.sendmessage """
   return this
 }
 
@@ -50,7 +59,9 @@ def publish_test_coverage(name) {
 // diff_id: The diff id to apply (e.g. 2458)
 def phabricator_apply_diff(phid, build_url, revision_id, diff_id) {
   phabricator("harbormaster.createartifact", """buildTargetPHID: "$phid", artifactType: "uri", artifactKey: "$build_url", artifactData: { uri: "$build_url", name: "Velocity Results", "ui.external": true }""")
-  phabricator("differential.revision.edit", """transactions: [{type: "request-review", value: true}], objectIdentifier: "D$revision_id" """)
+  ignore_error {
+    phabricator("differential.revision.edit", """transactions: [{type: "request-review", value: true}], objectIdentifier: "D$revision_id" """)
+  }
   phabricator("harbormaster.sendmessage", """ buildTargetPHID: "$phid", type: "work" """)
   sh "arc patch --diff $diff_id"
 }
@@ -171,9 +182,9 @@ def assembly() {
 }
 
 def package_binaries() {
-  parallel (
-          "Tar Binaries": {
-            sh """sudo tar -czv -f "target/marathon-${gitCommit}.tgz" \
+  parallel(
+      "Tar Binaries": {
+        sh """sudo tar -czv -f "target/marathon-${gitCommit}.tgz" \
                       Dockerfile \
                       README.md \
                       LICENSE \
@@ -182,21 +193,20 @@ def package_binaries() {
                       docs \
                       target/scala-2.*/marathon-assembly-*.jar
                  """
-          },
-          "Create Debian and Red Hat Package": {
-            dir("packaging") {
-              sh "sudo make all"
-            }
-          },
-          "Build Docker Image": {
-            // target is in .dockerignore so we just copy the jar before.
-            sh "cp target/*/marathon-assembly-*.jar ."
-            mesosVersion = sh(returnStdout: true, script: "sed -n 's/^.*MesosDebian = \"\\(.*\\)\"/\\1/p' <./project/Dependencies.scala").trim()
-            docker.build("mesosphere/marathon:${gitCommit}", "--build-arg MESOS_VERSION=${mesosVersion} .")
-          }
+      },
+      "Create Debian and Red Hat Package": {
+        dir("packaging") {
+          sh "sudo make all"
+        }
+      },
+      "Build Docker Image": {
+        // target is in .dockerignore so we just copy the jar before.
+        sh "cp target/*/marathon-assembly-*.jar ."
+        mesosVersion = sh(returnStdout: true, script: "sed -n 's/^.*MesosDebian = \"\\(.*\\)\"/\\1/p' <./project/Dependencies.scala").trim()
+        docker.build("mesosphere/marathon:${gitCommit}", "--build-arg MESOS_VERSION=${mesosVersion} .")
+      }
   )
 }
-
 
 /**
  * Execute block and set GitHub commit status to success or failure if block
@@ -211,14 +221,14 @@ def withCommitStatus(label, block) {
     block()
 
     currentBuild.result = 'SUCCESS'
-  } catch(error) {
+  } catch (error) {
     currentBuild.result = 'FAILURE'
     throw error
   } finally {
 
     // Mark commit with final status
-    step([ $class: 'GitHubCommitStatusSetter'
-           , contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: "Velocity " + label]
+    step([$class: 'GitHubCommitStatusSetter'
+        , contextSource: [$class: 'ManuallyEnteredCommitContextSource', context: "Velocity " + label]
     ])
   }
 }
@@ -237,7 +247,6 @@ def previousBuildFailed() {
 def stageWithCommitStatus(label, block) {
   stage(label) { withCommitStatus(label, block) }
 }
-
 
 // !!Important Boilerplate!!
 // The external code must return it's contents as an object

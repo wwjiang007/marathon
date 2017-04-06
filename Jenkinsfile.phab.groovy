@@ -1,6 +1,5 @@
 #!/usr/bin/env groovy
 
-
 /* BEGIN: Block of stuff that we can't have in the library for this job until the patch itself lands - chicken and egg: all in marathon.groovy */
 
 def setBuildInfo(displayName, description) {
@@ -24,15 +23,26 @@ def checkout_marathon_master() {
   return this
 }
 
+def ignore_error(block) {
+  try {
+    block
+  } catch(err) {
+
+  }
+  return this
+}
+
 def phabricator_apply_diff(phid, build_url, revision_id, diff_id) {
   phabricator("harbormaster.createartifact", """buildTargetPHID: "$phid", artifactType: "uri", artifactKey: "$build_url", artifactData: { uri: "$build_url", name: "Velocity Results", "ui.external": true }""")
-  phabricator("differential.revision.edit", """transactions: [{type: "reject", value: false}], objectIdentifier: "D$revision_id" """)
+  ignore_error {
+    phabricator("differential.revision.edit", """transactions: [{type: "reject", value: false}], objectIdentifier: "D$revision_id" """)
+  }
   phabricator("harbormaster.sendmessage", """ buildTargetPHID: "$phid", type: "work" """)
   sh "arc patch --diff $diff_id"
 }
 
 def phabricator(method, args) {
-  sh "jq -n '{ $args }' | arc call-conduit $method || true"
+  sh "jq -n '{ $args }' | arc call-conduit $method"
   return this
 }
 
@@ -115,14 +125,14 @@ ansiColor('gnome-terminal') {
       }
       stage("Publish Results") {
         m.clean_git()
-        m.phabricator_test_results("fail")
-        m.phabricator("differential.revision.edit", """ transactions: [{type: "accept", value: true}, {type: "comment", value: "Build Succeeded at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
+        m.phabricator_test_results("pass")
+        m.phabricator("differential.revision.edit", """ transactions: [{type: "accept", value: true}, {type: "comment", value: "\u221a Build of $DIFF_ID Succeeded at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
       }
     } catch (Exception err) {
       stage("Publish Results") {
         m.clean_git()
         m.phabricator_test_results("fail")
-        m.phabricator("differential.revision.edit", """ transactions: [{type: "reject", value: true}, {type: "comment", value: "Build Failed at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
+        m.phabricator("differential.revision.edit", """ transactions: [{type: "reject", value: true}, {type: "comment", value: "\u2717 Build of $DIFF_ID Failed at $BUILD_URL"}], objectIdentifier: "D$REVISION_ID" """)
         m.currentBuild.result = "FAILURE"
       }
     }
