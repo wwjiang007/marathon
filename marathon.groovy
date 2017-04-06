@@ -82,7 +82,9 @@ def kill_junk() {
 // Install job-level dependencies that aren't specific to the build and
 // can be required as part of checkout and should be applied before knowing
 // the revision's information. e.g. JQ is required to post to phabricator.
+// This should generally be fixed in the AMI, eventually.
 def install_dependencies() {
+  sh "chmod 0600 ~/.arcrc"
   // JQ is broken in the image
   sh "curl -L https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64 > /tmp/jq && sudo mv /tmp/jq /usr/bin/jq && sudo chmod +x /usr/bin/jq"
   // install ammonite (scala shell)
