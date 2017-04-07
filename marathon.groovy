@@ -179,6 +179,8 @@ def assembly() {
 }
 
 def package_binaries() {
+  gitCommit = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+
   parallel(
       "Tar Binaries": {
         sh """sudo tar -czv -f "target/marathon-${gitCommit}.tgz" \
