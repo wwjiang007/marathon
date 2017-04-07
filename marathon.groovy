@@ -13,7 +13,7 @@ def ignore_error(block) {
 // This is particularly useful for tagging things like "UNSTABLE.${TestName}"
 def mark_unstable_results(dirs) {
   // add prefix to qualified classname
-  sh """bin/mark_unstable_results.scala $dirs"""
+  sh """sudo bin/mark_unstable_results.scala $dirs"""
   return this
 }
 
@@ -113,7 +113,7 @@ def clean_git() {
 // run through compile/lint/docs. Fail if there were format changes after this.
 def compile() {
   withEnv(['RUN_DOCKER_INTEGRATION_TESTS=true', 'RUN_MESOS_INTEGRATION_TESTS=true']) {
-    sh "sudo -E sbt -Dsbt.log.format=false clean scapegoat doc coverage test:compile"
+    sh "sudo -E sbt -Dsbt.log.format=false clean scapegoat doc test:compile"
     sh """if git diff --quiet; then echo 'No format issues detected'; else echo 'Patch has Format Issues'; exit 1; fi"""
   }
 }
