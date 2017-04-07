@@ -28,7 +28,7 @@ def phabricator(method, args) {
 // Report all the test results for the given PHID with the given status to Harbormaster.
 // PHID is expected to be set as an environment variable
 def phabricator_test_results(status) {
-  sh """jq -s add '.' taget/phabricator-test-reports/*.json | jq '{buildTargetPHID: "$PHID", type: "$status", unit: [.[] * .[]] }' | arc call-conduit harbormaster.sendmessage """
+  sh """jq -s add taget/phabricator-test-reports/*.json | jq '{buildTargetPHID: "$PHID", type: "$status", unit: . }' | arc call-conduit harbormaster.sendmessage """
   return this
 }
 
