@@ -6,6 +6,7 @@ import akka.util.ByteString
 import mesosphere.marathon.core.async.ExecutionContexts
 import mesosphere.marathon.core.base._
 import mesosphere.marathon.stream.Implicits._
+import mesosphere.marathon.util.RichLock
 import org.apache.curator.RetryPolicy
 import org.apache.curator.framework.{ CuratorFramework, CuratorFrameworkFactory }
 import org.apache.curator.framework.api.{ BackgroundPathable, Backgroundable, Pathable }
@@ -29,16 +30,19 @@ import scala.util.control.NonFatal
   *
   * @param client The underlying Curator client.
   */
-class RichCuratorFramework(val client: CuratorFramework) extends AnyVal {
+class RichCuratorFramework(val client: CuratorFramework) {
+
+  val lock = RichLock()
+
   def usingNamespace(namespace: String): RichCuratorFramework = {
     new RichCuratorFramework(client.usingNamespace(namespace))
   }
 
-  def close(): Unit = synchronized {
+  def close(): Unit = lock {
     client.close()
   }
 
-  def start(): Unit = synchronized {
+  def start(): Unit = lock {
     client.start()
   }
 
@@ -131,7 +135,7 @@ class RichCuratorFramework(val client: CuratorFramework) extends AnyVal {
     }
   }
 
-  private def build[A <: Backgroundable[_], B](builder: A, future: ZkFuture[B])(f: A => Unit): Future[B] = synchronized {
+  private def build[A <: Backgroundable[_], B](builder: A, future: ZkFuture[B])(f: A => Unit): Future[B] = lock {
     if (client.getState() == CuratorFrameworkState.STOPPED) future.fail(new IllegalStateException("Curator connection to ZooKeeper has been stopped."))
     try {
       builder.inBackground(future)
