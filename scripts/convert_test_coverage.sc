@@ -1,4 +1,4 @@
-#!/usr/local/bin/amm
+#!/usr/bin/env amm
 
 /**
   * Convert test coverage data into the format that Phabricator/Harbormaster understands which is actually a

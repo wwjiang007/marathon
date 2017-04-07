@@ -13,7 +13,7 @@ def ignore_error(block) {
 // This is particularly useful for tagging things like "UNSTABLE.${TestName}"
 def mark_unstable_results(dirs) {
   // add prefix to qualified classname
-  sh """sudo bin/mark_unstable_results.scala $dirs"""
+  sh """sudo scripts/mark_unstable_results.sc $dirs"""
   return this
 }
 
@@ -35,7 +35,7 @@ def phabricator_test_results(status) {
 // Convert the test coverage into a "fake" unit test result so that
 // phabricator_test_results can consume it and report the coverage.
 def phabricator_convert_test_coverage() {
-  sh """sudo sh -c "/usr/local/bin/amm bin/convert_test_coverage.scala" """
+  sh """sudo scripts/convert_test_coverage.sc" """
   return this
 }
 
@@ -76,13 +76,14 @@ def install_mesos() {
 
 // Kill stale processes left-over from old builds.
 def kill_junk() {
-  sh "bin/kill-stale-test-processes"
+  sh "scripts/kill-stale-test-processes"
 }
 
 // Install job-level dependencies that aren't specific to the build and
 // can be required as part of checkout and should be applied before knowing
 // the revision's information. e.g. JQ is required to post to phabricator.
 // This should generally be fixed in the AMI, eventually.
+// MARATHON-7026
 def install_dependencies() {
   sh "chmod 0600 ~/.arcrc"
   // JQ is broken in the image

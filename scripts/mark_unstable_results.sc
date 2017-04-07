@@ -1,4 +1,4 @@
-#!/usr/local/bin/amm
+#!/usr/bin/env amm
 
 import ammonite.ops._
 import scala.xml._
