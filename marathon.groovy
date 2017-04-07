@@ -76,7 +76,7 @@ def install_mesos() {
 
 // Kill stale processes left-over from old builds.
 def kill_junk() {
-  sh "scripts/kill-stale-test-processes.sc"
+  sh "scripts/kill_stale_test_processes.sc"
 }
 
 // Install job-level dependencies that aren't specific to the build and
