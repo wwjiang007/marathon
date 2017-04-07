@@ -18,6 +18,7 @@ def main(directories: String*) = {
             Elem(prefix, "testsuite", newAttributes, scope, minimizeEmpty = false, children: _*)
           case Elem(prefix, "testcase", attribs, scope, children@_*) =>
             val newAttributes = attribs.filter(_.key != "classname").append(new UnprefixedAttribute("classname", s"UNSTABLE.${attribs.get("classname").head.text}", Null))
+            Elem(prefix, "testcase", newAttributes, scope, minimizeEmpty = false, children: _*)
           case other => other
         }
       }
