@@ -13,7 +13,7 @@ def ignore_error(block) {
 // This is particularly useful for tagging things like "UNSTABLE.${TestName}"
 def mark_unstable_results(dirs) {
   // add prefix to qualified classname
-  sh """sudo scripts/mark_unstable_results.sc $dirs"""
+  sh """sudo /usr/local/bin/amm scripts/mark_unstable_results.sc $dirs"""
   return this
 }
 
@@ -35,7 +35,7 @@ def phabricator_test_results(status) {
 // Convert the test coverage into a "fake" unit test result so that
 // phabricator_test_results can consume it and report the coverage.
 def phabricator_convert_test_coverage() {
-  sh """sudo scripts/convert_test_coverage.sc" """
+  sh """sudo /usr/local/bin/amm scripts/convert_test_coverage.sc" """
   return this
 }
 
@@ -76,7 +76,7 @@ def install_mesos() {
 
 // Kill stale processes left-over from old builds.
 def kill_junk() {
-  sh "scripts/kill_stale_test_processes.sc"
+  sh "/usr/local/bin/amm scripts/kill_stale_test_processes.sc"
 }
 
 // Install job-level dependencies that aren't specific to the build and
