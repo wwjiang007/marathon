@@ -103,7 +103,7 @@ def setBuildInfo(displayName, description) {
 def checkout_marathon_master() {
   git changelog: false, credentialsId: '4ff09dce-407b-41d3-847a-9e6609dd91b8', poll: false, url: 'git@github.com:mesosphere/marathon.git'
   sh "sudo git clean -fdx"
-  sh """git fetch --prune origin "+refs/tags/*:refs/tags/*" """
+  sh """git tag | grep phabricator | xargs git tag -d || true """
   return this
 }
 
