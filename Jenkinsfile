@@ -10,6 +10,7 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
       gitCommit = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
       shortCommit = gitCommit.take(8)
       currentBuild.displayName = "#${env.BUILD_NUMBER}: ${shortCommit}"
+      sh """git fetch --prune origin "+refs/tags/*:refs/tags/*" """
     }
     m = load("marathon.groovy")
 
