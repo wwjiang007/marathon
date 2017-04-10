@@ -35,7 +35,9 @@ apt-get install -y \
     build-essential \
     rpm \
     ruby \
-    ruby-dev
+    ruby-dev \
+    node \
+    npm
 
 apt install -t jessie-backports -y openjdk-8-jdk
 
@@ -66,5 +68,7 @@ curl -o /usr/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.5/jq-l
 
 # Warmup ivy2 cache
 git clone https://github.com/mesosphere/marathon.git /home/admin/marathon
-su - admin -c "cd /home/admin/marathon && sbt update"
+su - admin
+cd /home/admin/marathon
+sbt update
 rm -rf /home/admin/marathon

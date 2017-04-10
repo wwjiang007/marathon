@@ -40,7 +40,7 @@ def stageWithCommitStatus(label, block) {
   stage(label) { withCommitStatus(label, block) }
 }
 
-node('JenkinsMarathonCI-Debian8-2017-03-21') {
+node('JenkinsMarathonCI-Debian8-2017-04-10') {
     try {
         stage("Checkout Repo") {
             checkout scm
