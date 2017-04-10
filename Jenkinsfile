@@ -77,13 +77,13 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
     stage("7. Archive Artifacts") {
       archiveArtifacts artifacts: 'target/**/classes/**', allowEmptyArchive: true
       archiveArtifacts artifacts: 'target/marathon-runnable.jar', allowEmptyArchive: true
-      archiveArtifacts artifacts: "target/marathon-${gitCommit}.tgz", allowEmptyArchive: false
+      archiveArtifacts artifacts: "target/marathon-${gitVersion}.tgz", allowEmptyArchive: false
       archiveArtifacts artifacts: "packaging/marathon*.deb", allowEmptyArchive: false
       archiveArtifacts artifacts: "packaging/marathon*.rpm", allowEmptyArchive: false
       step([
           $class: 'S3BucketPublisher',
           entries: [[
-              sourceFile: "target/marathon-${gitCommit}.tgz",
+              sourceFile: "target/marathon-*.tgz",
               bucket: 'marathon-artifacts',
               selectedRegion: 'us-west-2',
               noUploadOnFailure: true,
@@ -101,7 +101,7 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
     // Only create latest-dev snapshot for master.
     if (env.BRANCH_NAME == "master") {
       stage("8. Publish Docker Image Snaphot") {
-        docker.image("mesosphere/marathon:${gitCommit}").tag("latest-dev")
+        docker.image("mesosphere/marathon:${gitVersion}").tag("latest-dev")
         docker.withRegistry("https://index.docker.io/v1/", "docker-hub-credentials") {
           docker.image("mesosphere/marathon:latest-dev").push()
         }
