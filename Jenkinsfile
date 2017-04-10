@@ -13,6 +13,7 @@ node('JenkinsMarathonCI-Debian8-2017-03-21') {
       sh """git tag | grep phabricator | xargs git tag -d || true """
     }
     m = load("marathon.groovy")
+    m.install_dependencies()
 
     stage("Kill junk processes") {
       m.kill_junk()
