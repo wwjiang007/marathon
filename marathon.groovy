@@ -154,7 +154,7 @@ def integration_test() {
 
 def has_unstable_tests() {
   // this line will match, so we have to consider it.
-  return sh(script: "git grep \"@UnstableTest\" | wc -l", returnStdout: true) != "1"
+  return sh(script: "git grep \"@UnstableTest\" | wc -l", returnStdout: true).trim() != "1"
 }
 
 def unstable_test() {
