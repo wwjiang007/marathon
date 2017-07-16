@@ -1,6 +1,7 @@
 """ This is a set of tests which are expected to run on root Marathon and marathon on marathon (MoM).
 """
 import common
+import json
 import os
 import pytest
 import retrying
@@ -13,27 +14,13 @@ from datetime import timedelta
 from common import (app, app_mesos, block_port, cluster_info, ensure_mom, group,
                     health_check, ip_of_mom, ip_other_than_mom, pin_to_host,
                     persistent_volume_app, python_http_app, readiness_and_health_app,
-                    restore_iptables, nginx_with_ssl_support, command_health_check, delete_all_apps_wait)
+                    restore_iptables, nginx_with_ssl_support, command_health_check, delete_all_apps_wait,
+                    docker_env_set)
 from dcos import http, marathon, mesos
 from shakedown import (dcos_1_8, dcos_1_9, dcos_1_10, dcos_version_less_than, private_agents, required_private_agents,
                        marthon_version_less_than, mom_version_less_than, marathon_1_4, ee_version)
 from urllib.parse import urljoin
 from utils import fixture_dir, get_resource
-
-
-def test_launch_mesos_container():
-    """ Test the successful launch of a mesos container on Marathon.
-    """
-    client = marathon.create_client()
-    app_id = uuid.uuid4().hex
-    client.add_app(app_mesos(app_id))
-    shakedown.deployment_wait()
-
-    tasks = client.get_tasks(app_id)
-    app = client.get_app(app_id)
-
-    assert len(tasks) == 1
-    assert app['container']['type'] == 'MESOS'
 
 
 def test_launch_mesos_container():
@@ -48,8 +35,8 @@ def test_launch_mesos_container():
     tasks = client.get_tasks(app_id)
     app = client.get_app(app_id)
 
-    assert len(tasks) == 1
-    assert app['container']['type'] == 'MESOS'
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
+    assert app['container']['type'] == 'MESOS', "Container type is NOT MESOS"
 
 
 def test_launch_docker_container():
@@ -63,8 +50,8 @@ def test_launch_docker_container():
     tasks = client.get_tasks(app_id)
     app = client.get_app(app_id)
 
-    assert len(tasks) == 1
-    assert app['container']['type'] == 'DOCKER'
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
+    assert app['container']['type'] == 'DOCKER', "Container type is NOT DOCKER"
 
 
 def test_launch_mesos_container_with_docker_image():
@@ -79,8 +66,8 @@ def test_launch_mesos_container_with_docker_image():
     tasks = client.get_tasks(app_id)
     app = client.get_app(app_id)
 
-    assert len(tasks) == 1
-    assert app['container']['type'] == 'MESOS'
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
+    assert app['container']['type'] == 'MESOS', "Container type is NOT MESOS"
 
 
 # this fails on 1.7, it is likely the version of marathon in universe for 1.7
@@ -176,10 +163,10 @@ def test_docker_port_mappings():
     status, output = shakedown.run_command_on_agent(host, cmd)
 
     assert status
-    assert output == "200"
+    assert output == "200", "HTTP status: {} is NOT 200".format(output)
 
 
-def retry_on_exception(exc):
+def ignore_on_exception(exc):
     return isinstance(exc, Exception)
 
 
@@ -209,6 +196,7 @@ def test_docker_dns_mapping(marathon_service_name):
 
     check_dns()
 
+
 def test_launch_app_timed():
     """ Most tests wait until a task is launched with no reference to time.
     This simple test verifies that if a app is launched on marathon that within 3 secs
@@ -220,24 +208,7 @@ def test_launch_app_timed():
     # if not launched in 3 sec fail
     time.sleep(3)
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 1
-
-
-def test_ui_registration_requirement():
-    """ Testing the UI is a challenge with this toolchain.  The UI team has the
-        best tooling for testing it.   This test verifies that the required configurations
-        for the service endpoint and ability to launch to the service UI are present.
-    """
-    tasks = mesos.get_master().tasks()
-    for task in tasks:
-        if task['name'] == 'marathon-user':
-            for label in task['labels']:
-                if label['key'] == 'DCOS_PACKAGE_NAME':
-                    assert label['value'] == 'marathon'
-                if label['key'] == 'DCOS_PACKAGE_IS_FRAMEWORK':
-                    assert label['value'] == 'true'
-                if label['key'] == 'DCOS_SERVICE_NAME':
-                    assert label['value'] == 'marathon-user'
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
 
 
 def test_ui_available(marathon_service_name):
@@ -247,7 +218,7 @@ def test_ui_available(marathon_service_name):
 
     response = http.get("{}/ui/".format(
         shakedown.dcos_service_url(marathon_service_name)))
-    assert response.status_code == 200
+    assert response.status_code == 200, "HTTP code: {} is NOT 200".format(response.status_code)
 
 
 def test_task_failure_recovers():
@@ -267,9 +238,10 @@ def test_task_failure_recovers():
     @retrying.retry(stop_max_delay=10000)
     def check_new_task_id():
         new_tasks = client.get_tasks(app_id)
-        assert tasks[0]['id'] != new_tasks[0]['id']
+        assert tasks[0]['id'] != new_tasks[0]['id'], "id: {} is NOT {}".format(tasks[0]['id'], new_tasks[0]['id'])
 
     check_new_task_id()
+
 
 @pytest.mark.skipif("ee_version() == 'strict'")
 def test_good_user():
@@ -301,7 +273,7 @@ def test_bad_user():
     client = marathon.create_client()
     client.add_app(app_def)
 
-    @retrying.retry(wait_fixed=1000, stop_max_delay=10000, retry_on_exception=retry_on_exception)
+    @retrying.retry(wait_fixed=1000, stop_max_delay=10000, retry_on_exception=ignore_on_exception)
     def check_failure_message():
         appl = client.get_app(app_id)
         message = appl['lastTaskFailure']['message']
@@ -326,7 +298,7 @@ def test_bad_uri():
     client.add_app(app_def)
 
 
-    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=retry_on_exception)
+    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=ignore_on_exception)
     def check_failure_message():
         appl = client.get_app(app_id)
         message = appl['lastTaskFailure']['message']
@@ -351,7 +323,7 @@ def test_launch_group():
 
     group_apps = client.get_group('/test-group/sleep')
     apps = group_apps['apps']
-    assert len(apps) == 2
+    assert len(apps) == 2, "Num of tasks: {} is not 2 after deployment".format(len(tasks))
 
 
 def test_scale_group():
@@ -369,19 +341,19 @@ def test_scale_group():
 
     group_apps = client.get_group('/test-group/sleep')
     apps = group_apps['apps']
-    assert len(apps) == 2
+    assert len(apps) == 2, "Num of Apps: {} is not 2".format(len(apps))
     tasks1 = client.get_tasks('/test-group/sleep/goodnight')
     tasks2 = client.get_tasks('/test-group/sleep/goodnight2')
-    assert len(tasks1) == 1
-    assert len(tasks2) == 1
+    assert len(tasks1) == 1, "Num of tasks 1: {} is not 1 after deployment".format(len(tasks1))
+    assert len(tasks2) == 1, "Num of tasks 2: {} is not 1 after deployment".format(len(tasks2))
 
     # scale by 2 for the entire group
     client.scale_group('/test-group/sleep', 2)
     shakedown.deployment_wait()
     tasks1 = client.get_tasks('/test-group/sleep/goodnight')
     tasks2 = client.get_tasks('/test-group/sleep/goodnight2')
-    assert len(tasks1) == 2
-    assert len(tasks2) == 2
+    assert len(tasks1) == 2, "Num of tasks 1: {} is not 2 after scale".format(len(tasks1))
+    assert len(tasks2) == 2, "Num of tasks 2: {} is not 2 after scale".format(len(tasks2))
 
 
 # required_cpus
@@ -401,19 +373,19 @@ def test_scale_app_in_group():
 
     group_apps = client.get_group('/test-group/sleep')
     apps = group_apps['apps']
-    assert len(apps) == 2
+    assert len(apps) == 2, "Num of Apps: {} is not 2".format(len(apps))
     tasks1 = client.get_tasks('/test-group/sleep/goodnight')
     tasks2 = client.get_tasks('/test-group/sleep/goodnight2')
-    assert len(tasks1) == 1
-    assert len(tasks2) == 1
+    assert len(tasks1) == 1, "Num of tasks 1: {} is not 1 after deployment".format(len(tasks1))
+    assert len(tasks2) == 1, "Num of tasks 2: {} is not 1 after deployment".format(len(tasks2))
 
     # scaling just an app in the group
     client.scale_app('/test-group/sleep/goodnight', 2)
     shakedown.deployment_wait()
     tasks1 = client.get_tasks('/test-group/sleep/goodnight')
     tasks2 = client.get_tasks('/test-group/sleep/goodnight2')
-    assert len(tasks1) == 2
-    assert len(tasks2) == 1
+    assert len(tasks1) == 2, "Num of tasks 1: {} is not 2 after scale".format(len(tasks1))
+    assert len(tasks2) == 1, "Num of tasks 2: {} is not 1 after scale".format(len(tasks2))
 
 
 @private_agents(2)
@@ -432,19 +404,19 @@ def test_scale_app_in_group_then_group():
 
     group_apps = client.get_group('/test-group/sleep')
     apps = group_apps['apps']
-    assert len(apps) == 2
+    assert len(apps) == 2, "Num of Apps: {} is not 2".format(len(apps))
     tasks1 = client.get_tasks('/test-group/sleep/goodnight')
     tasks2 = client.get_tasks('/test-group/sleep/goodnight2')
-    assert len(tasks1) == 1
-    assert len(tasks2) == 1
+    assert len(tasks1) == 1, "Num of tasks 1: {} is not 1 after deployment".format(len(tasks1))
+    assert len(tasks2) == 1, "Num of tasks 2: {} is not 1 after deployment".format(len(tasks2))
 
     # scaling just an app
     client.scale_app('/test-group/sleep/goodnight', 2)
     shakedown.deployment_wait()
     tasks1 = client.get_tasks('/test-group/sleep/goodnight')
     tasks2 = client.get_tasks('/test-group/sleep/goodnight2')
-    assert len(tasks1) == 2
-    assert len(tasks2) == 1
+    assert len(tasks1) == 2, "Num of tasks 1: {} is not 2 after scale".format(len(tasks1))
+    assert len(tasks2) == 1, "Num of tasks 2: {} is not 1 after scale".format(len(tasks2))
 
     # scaling the group after 1 app in the group was scaled.
     client.scale_group('/test-group/sleep', 2)
@@ -452,8 +424,8 @@ def test_scale_app_in_group_then_group():
     time.sleep(1)
     tasks1 = client.get_tasks('/test-group/sleep/goodnight')
     tasks2 = client.get_tasks('/test-group/sleep/goodnight2')
-    assert len(tasks1) == 4
-    assert len(tasks2) == 2
+    assert len(tasks1) == 4, "Num of tasks 1: {} is not 4 after scale".format(len(tasks1))
+    assert len(tasks2) == 2, "Num of tasks 2: {} is not 2 after scale".format(len(tasks2))
 
 
 @dcos_1_9
@@ -508,8 +480,7 @@ def test_https_health_check_healthy(protocol='MESOS_HTTPS'):
         SSL (using self-signed certificate) and listens on 443
     """
     # marathon version captured here will work for root and mom
-    if marthon_version_less_than('1.4.2'):
-        pytest.skip()
+    requires_marathon_version('1.4.2')
 
     client = marathon.create_client()
 
@@ -574,7 +545,7 @@ def test_health_failed_check():
     shakedown.deployment_wait()
 
     # after network failure is restored.  The task returns and is a new task ID
-    @retrying.retry(wait_fixed=1000, stop_max_delay=3000)
+    @retrying.retry(wait_fixed=1000, stop_max_delay=3000, retry_on_exception=ignore_on_exception)
     def check_health_message():
         new_tasks = client.get_tasks('/healthy')
         assert new_tasks[0]['id'] != tasks[0]['id']
@@ -618,14 +589,14 @@ def test_pinned_task_scales_on_host_only():
     shakedown.deployment_wait()
 
     tasks = client.get_tasks('/pinned')
-    assert len(tasks) == 1
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
     assert tasks[0]['host'] == host
 
     client.scale_app('pinned', 10)
     shakedown.deployment_wait()
 
     tasks = client.get_tasks('/pinned')
-    assert len(tasks) == 10
+    assert len(tasks) == 10, "Num of tasks: {} is not 10 after scale".format(len(tasks))
     for task in tasks:
         assert task['host'] == host
 
@@ -678,8 +649,8 @@ def test_pinned_task_does_not_scale_to_unpinned_host():
     tasks = client.get_tasks('/pinned')
 
     # still deploying
-    assert len(deployments) == 1
-    assert len(tasks) == 1
+    assert len(deployments) == 1, "Num of deployments: {} is not 1 ".format(len(deployments))
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
 
 
 @private_agents(2)
@@ -700,7 +671,7 @@ def test_pinned_task_does_not_find_unknown_host():
     time.sleep(10)
 
     tasks = client.get_tasks('/pinned')
-    assert len(tasks) == 0
+    assert len(tasks) == 0, "Num of tasks: {} is not 0".format(len(tasks))
 
 
 @dcos_1_8
@@ -715,7 +686,7 @@ def test_launch_container_with_persistent_volume():
     shakedown.deployment_wait()
 
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 1
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
 
     port = tasks[0]['ports'][0]
     host = tasks[0]['host']
@@ -728,10 +699,10 @@ def test_launch_container_with_persistent_volume():
     client.restart_app(app_id)
     shakedown.deployment_wait()
 
-    @retrying.retry(wait_fixed=1000, stop_max_delay=10000)
+    @retrying.retry(wait_fixed=1000, stop_max_delay=10000, retry_on_exception=ignore_on_exception)
     def check_task_recovery():
         tasks = client.get_tasks(app_id)
-        assert len(tasks) == 1
+        assert len(tasks) == 1, "Num of tasks: {} is not 1 after recovery".format(len(tasks))
 
     check_task_recovery()
 
@@ -754,7 +725,7 @@ def test_update_app():
     shakedown.deployment_wait()
 
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 1
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
 
     app_def['cpus'] = 1
     app_def['instances'] = 2
@@ -762,7 +733,7 @@ def test_update_app():
     shakedown.deployment_wait()
 
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 2
+    assert len(tasks) == 2, "Num of tasks: {} is not 2 after update".format(len(tasks))
 
 
 def test_update_app_rollback():
@@ -778,7 +749,7 @@ def test_update_app_rollback():
 
     # start with 1
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 1
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
 
     app_def['instances'] = 2
     client.update_app(app_id, app_def)
@@ -786,7 +757,7 @@ def test_update_app_rollback():
 
     # update works to 2
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 2
+    assert len(tasks) == 2, "Num of tasks: {} is not 2 after update".format(len(tasks))
 
     # provides a testing delay to rollback from
     app_def['readinessChecks'][0]['intervalSeconds'] = 30
@@ -797,7 +768,7 @@ def test_update_app_rollback():
     shakedown.deployment_wait()
     # update to 1 instance is rollback to 2
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 2
+    assert len(tasks) == 2, "Num of tasks: {} is not 2 after rollback".format(len(tasks))
 
 
 def test_update_app_poor_health():
@@ -813,7 +784,7 @@ def test_update_app_poor_health():
 
     # start with 1
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 1
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after deployment".format(len(tasks))
 
     # provides a testing delay to rollback from
     app_def['healthChecks'][0]['path'] = '/non-existant'
@@ -827,7 +798,7 @@ def test_update_app_poor_health():
         shakedown.deployment_wait()
 
     tasks = client.get_tasks(app_id)
-    assert len(tasks) == 1
+    assert len(tasks) == 1, "Num of tasks: {} is not 1 after rollback".format(len(tasks))
 
 
 @private_agents(2)
@@ -849,10 +820,10 @@ def test_marathon_with_master_process_failure(marathon_service_name):
     common.systemctl_master()
     shakedown.wait_for_service_endpoint(marathon_service_name)
 
-    @retrying.retry(wait_fixed=1000, stop_max_delay=10000, retry_on_exception=retry_on_exception)
+    @retrying.retry(wait_fixed=1000, stop_max_delay=10000, retry_on_exception=ignore_on_exception)
     def check_task_recovery():
         tasks = client.get_tasks('/master-failure')
-        tasks[0]['id'] == original_task_id
+        assert tasks[0]['id'] == original_task_id
 
     check_task_recovery()
 
@@ -878,10 +849,10 @@ def test_marathon_when_disconnected_from_zk():
         time.sleep(10)
 
     # after access to zk is restored.
-    @retrying.retry(wait_fixed=1000, stop_max_delay=3000)
+    @retrying.retry(wait_fixed=1000, stop_max_delay=3000, retry_on_exception=ignore_on_exception)
     def check_task_is_back():
         tasks = client.get_tasks('/zk-failure')
-        tasks[0]['id'] == original_task_id
+        assert tasks[0]['id'] == original_task_id
 
     check_task_is_back()
 
@@ -901,10 +872,10 @@ def test_marathon_when_task_agent_bounced():
     original_task_id = tasks[0]['id']
     shakedown.restart_agent(host)
 
-    @retrying.retry(wait_fixed=1000, stop_max_delay=3000)
+    @retrying.retry(wait_fixed=1000, stop_max_delay=3000, retry_on_exception=ignore_on_exception)
     def check_task_is_back():
         tasks = client.get_tasks('/agent-failure')
-        tasks[0]['id'] == original_task_id
+        assert tasks[0]['id'] == original_task_id
 
     check_task_is_back()
 
@@ -919,7 +890,8 @@ def test_default_user():
     client.add_app(application_json)
     shakedown.deployment_wait()
     app = client.get_app(application_json['id'])
-    assert app['user'] is None
+    user = app.get('user')
+    assert user is None
 
     # wait for deployment to finish
     tasks = client.get_tasks("unique-sleep")
@@ -960,7 +932,7 @@ def _test_declined_offer(app_id, app_def, reason):
     client = marathon.create_client()
     client.add_app(app_def)
 
-    @retrying.retry(wait_fixed=1000, stop_max_delay=10000, retry_on_exception=retry_on_exception)
+    @retrying.retry(wait_fixed=1000, stop_max_delay=10000, retry_on_exception=ignore_on_exception)
     def verify_declined_offer():
         deployments = client.get_deployments(app_id)
         assert len(deployments) == 1
@@ -986,10 +958,6 @@ def declined_offer_by_reason(offers, reason):
     return None
 
 
-def docker_env_set():
-    return 'DOCKER_HUB_USERNAME' not in os.environ and 'DOCKER_HUB_PASSWORD' not in os.environ
-
-
 @pytest.mark.skipif("docker_env_set()")
 def test_private_repository_docker_app():
     # Create and copy docker credentials to all private agents
@@ -1011,25 +979,33 @@ def test_private_repository_docker_app():
     common.assert_app_tasks_running(client, app_def)
 
 
-@pytest.mark.skip(reason="Not yet implemented in mesos")
+@pytest.mark.skipif('marthon_version_less_than("1.5")')
+@pytest.mark.skipif("ee_version() is None")
+@pytest.mark.skipif("docker_env_set()")
 def test_private_repository_mesos_app():
-    """ Test private docker registry with mesos containerizer using "credentials" container field.
-        Note: Despite of what DC/OS docmentation states this feature is not yet implemented:
-        https://issues.apache.org/jira/browse/MESOS-7088
-    """
+    """ Test private docker registry with mesos containerizer using "config" container's image field."""
+
+    if not common.is_enterprise_cli_package_installed():
+        common.install_enterprise_cli_package()
+
+    username = os.environ['DOCKER_HUB_USERNAME']
+    password = os.environ['DOCKER_HUB_PASSWORD']
+
+    secret_name = "dockerPullConfig"
+    secret_value_json = common.create_docker_pull_config_json(username, password)
+    secret_value = json.dumps(secret_value_json)
 
     client = marathon.create_client()
-    assert 'DOCKER_HUB_USERNAME' in os.environ, "Couldn't find docker hub username. $DOCKER_HUB_USERNAME is not set"
-    assert 'DOCKER_HUB_PASSWORD' in os.environ, "Couldn't find docker hub password. $DOCKER_HUB_PASSWORD is not set"
+    common.create_secret(secret_name, secret_value)
 
-    principal = os.environ['DOCKER_HUB_USERNAME']
-    secret = os.environ['DOCKER_HUB_PASSWORD']
+    try:
+        app_def = common.private_mesos_container_app(secret_name)
+        client.add_app(app_def)
+        shakedown.deployment_wait()
 
-    app_def = common.private_mesos_container_app(principal, secret)
-    client.add_app(app_def)
-    shakedown.deployment_wait()
-
-    common.assert_app_tasks_running(client, app_def)
+        common.assert_app_tasks_running(client, app_def)
+    finally:
+        common.delete_secret(secret_name)
 
 
 def test_ping(marathon_service_name):
@@ -1037,7 +1013,7 @@ def test_ping(marathon_service_name):
         This isn't provided by the client object and will need to create the url to test
     """
     response = common.http_get_marathon_path('ping', marathon_service_name)
-    assert response.status_code == 200
+    assert response.status_code == 200, "HTTP Code {} is NOT 200".format(response.status_code)
     assert 'pong' in response.text
 
 
@@ -1070,6 +1046,15 @@ def test_vip_mesos_cmd(marathon_service_name):
         common.assert_http_code('{}:{}'.format(fqn, 10000))
 
     http_output_check()
+
+
+def test_metric_endpoint(marathon_service_name):
+    response = http.get("{}metrics".format(
+        shakedown.dcos_service_url(marathon_service_name)))
+    assert response.status_code == 200
+    print(response.json()['gauges'])
+    assert response.json()['gauges']['service.mesosphere.marathon.app.count'] is not None
+
 
 @dcos_1_9
 def test_vip_docker_bridge_mode(marathon_service_name):
@@ -1124,6 +1109,18 @@ def add_container_network(app_def, network, port=7777):
     return app_def
 
 
+def requires_marathon_version(version):
+    """ This python module is for testing root and MoM marathons.   The @marathon_1_5
+        annotation works only for the root marathon.   The context switching necessary
+        for switching the marathons occurs after the evaluation of the pytestmark.
+        This function is used to ensure the correct version of marathon regardless
+        of root or mom.
+    """
+    # marathon version captured here will work for root and mom
+    if marthon_version_less_than(version):
+        pytest.skip()
+
+
 @pytest.mark.parametrize("test_type, get_pinger_app, dns_format", [
         ('localhost', common.pinger_localhost_app, '{}.{}.mesos'),
         ('bridge', common.pinger_bridge_app, '{}.{}.mesos'),
@@ -1176,6 +1173,7 @@ def test_network_pinger(test_type, get_pinger_app, dns_format, marathon_service_
 def clear_marathon():
     try:
         common.stop_all_deployments()
+        common.clear_pods()
         common.delete_all_apps_wait()
     except Exception as e:
         print(e)
