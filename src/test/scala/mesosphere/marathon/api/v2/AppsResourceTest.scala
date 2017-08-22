@@ -7,9 +7,10 @@ import javax.ws.rs.core.Response
 import akka.Done
 import mesosphere.AkkaUnitTest
 import mesosphere.marathon.api._
+import mesosphere.marathon.api.v2.validation.NetworkValidationMessages
 import mesosphere.marathon.core.appinfo.AppInfo.Embed
 import mesosphere.marathon.core.appinfo._
-import mesosphere.marathon.core.base.ConstantClock
+import mesosphere.marathon.test.SettableClock
 import mesosphere.marathon.core.deployment.DeploymentPlan
 import mesosphere.marathon.core.group.GroupManager
 import mesosphere.marathon.core.plugin.PluginManager
@@ -33,7 +34,7 @@ import scala.util.Try
 class AppsResourceTest extends AkkaUnitTest with GroupCreation {
 
   case class Fixture(
-      clock: ConstantClock = ConstantClock(),
+      clock: SettableClock = new SettableClock(),
       auth: TestAuthFixture = new TestAuthFixture,
       appTaskResource: AppTasksResource = mock[AppTasksResource],
       service: MarathonSchedulerService = mock[MarathonSchedulerService],
@@ -107,7 +108,7 @@ class AppsResourceTest extends AkkaUnitTest with GroupCreation {
 
   case class FixtureWithRealGroupManager(
       initialRoot: RootGroup = RootGroup.empty,
-      clock: ConstantClock = ConstantClock(),
+      clock: SettableClock = new SettableClock(),
       auth: TestAuthFixture = new TestAuthFixture,
       appTaskResource: AppTasksResource = mock[AppTasksResource],
       service: MarathonSchedulerService = mock[MarathonSchedulerService],
@@ -273,6 +274,22 @@ class AppsResourceTest extends AkkaUnitTest with GroupCreation {
       response.getMetadata.containsKey(RestResource.DeploymentHeader) should be(true)
     }
 
+    "Fail creating application when network name is missing" in new Fixture {
+      Given("An app and group")
+      val app = App(
+        id = "/app",
+        cmd = Some("cmd"),
+        networks = Seq(Network(mode = NetworkMode.Container))
+      )
+
+      When("The create request is made")
+      val response = appsResource.create(Json.stringify(Json.toJson(app)).getBytes("UTF-8"), force = false, auth.request)
+
+      Then("Validation fails")
+      response.getStatus should be(422)
+      response.getEntity.toString should include(NetworkValidationMessages.NetworkNameMustBeSpecified)
+    }
+
     "Create a new app with IP/CT, no default network name, Alice does not specify a network" in new Fixture {
       Given("An app and group")
       val app = App(
@@ -377,11 +394,11 @@ class AppsResourceTest extends AkkaUnitTest with GroupCreation {
       When("The application is updated")
       val updatedJson = Json.toJson(updatedApp).as[JsObject]
       val updatedBody = Json.stringify(updatedJson).getBytes("UTF-8")
+      val response = appsResource.replace(updatedApp.id, updatedBody, force = false, partialUpdate = false, auth.request)
 
       Then("the update should fail")
-      the[NormalizationException] thrownBy {
-        appsResource.replace(updatedApp.id, updatedBody, force = false, partialUpdate = false, auth.request)
-      } should have message NetworkNormalizationMessages.ContainerNetworkNameUnresolved
+      response.getStatus should be(422)
+      response.getEntity.toString should include(NetworkValidationMessages.NetworkNameMustBeSpecified)
     }
 
     "Create a new app without IP/CT when default virtual network is bar" in new Fixture(configArgs = Seq("--default_network_name", "bar")) {

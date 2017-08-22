@@ -2,6 +2,8 @@ package mesosphere.marathon
 package api.akkahttp
 package v2
 
+import java.time.Clock
+
 import akka.event.EventStream
 import akka.actor.ActorSystem
 import akka.http.scaladsl.model.StatusCodes
@@ -12,7 +14,6 @@ import mesosphere.marathon.api.v2.AppsResource.{ NormalizationConfig, authzSelec
 import mesosphere.marathon.api.v2.Validation.validateOrThrow
 import mesosphere.marathon.api.v2.validation.AppValidation
 import mesosphere.marathon.core.appinfo._
-import mesosphere.marathon.core.base.Clock
 import mesosphere.marathon.core.deployment.DeploymentPlan
 import mesosphere.marathon.core.group.GroupManager
 import mesosphere.marathon.core.plugin.PluginManager
@@ -43,7 +44,7 @@ class AppsController(
   import Directives._
 
   private implicit lazy val validateApp = AppDefinition.validAppDefinition(config.availableFeatures)(pluginManager)
-  private implicit lazy val updateValidator = AppValidation.validateCanonicalAppUpdateAPI(config.availableFeatures)
+  private implicit lazy val updateValidator = AppValidation.validateCanonicalAppUpdateAPI(config.availableFeatures, () => normalizationConfig.defaultNetworkName)
 
   import AppsController._
   import EntityMarshallers._
@@ -148,7 +149,7 @@ object AppsController {
   def appNormalization(config: NormalizationConfig): Normalization[raml.App] = Normalization { app =>
     validateOrThrow(app)(AppValidation.validateOldAppAPI)
     val migrated = AppNormalization.forDeprecated(config.config).normalized(app)
-    validateOrThrow(migrated)(AppValidation.validateCanonicalAppAPI(config.enabledFeatures))
+    validateOrThrow(migrated)(AppValidation.validateCanonicalAppAPI(config.enabledFeatures, () => config.config.defaultNetworkName))
     AppNormalization(config.config).normalized(migrated)
   }
 }

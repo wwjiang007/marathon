@@ -1,11 +1,12 @@
 package mesosphere.marathon
 package core.flow.impl
 
+import java.time.Clock
+
 import akka.actor.{ Actor, Cancellable, Props }
 import akka.event.{ EventStream, LoggingReceive }
 import com.typesafe.scalalogging.StrictLogging
 import mesosphere.marathon.MarathonSchedulerDriverHolder
-import mesosphere.marathon.core.base.Clock
 import mesosphere.marathon.core.flow.ReviveOffersConfig
 import mesosphere.marathon.core.flow.impl.ReviveOffersActor.OffersWanted
 import mesosphere.marathon.core.event.{ SchedulerRegisteredEvent, SchedulerReregisteredEvent }
@@ -24,7 +25,7 @@ private[flow] object ReviveOffersActor {
   }
 
   private[impl] case object TimedCheck
-  private[impl] case class OffersWanted(wanted: Boolean)
+  private[impl] case object OffersWanted
 }
 
 /**
@@ -43,7 +44,7 @@ private[impl] class ReviveOffersActor(
   private[impl] var nextReviveCancellableOpt: Option[Cancellable] = None
 
   override def preStart(): Unit = {
-    subscription = offersWanted.map(OffersWanted).subscribe(self ! _)
+    subscription = offersWanted.subscribe(offersWanted => if (offersWanted) self ! OffersWanted)
     marathonEventStream.subscribe(self, classOf[SchedulerRegisteredEvent])
     marathonEventStream.subscribe(self, classOf[SchedulerReregisteredEvent])
   }
@@ -79,14 +80,9 @@ private[impl] class ReviveOffersActor(
         logger.info(s"=> Schedule next revive at $nextRevive in $untilNextRevive, adhering to --${conf.minReviveOffersInterval.name} ${conf.minReviveOffersInterval()} (ms)")
         nextReviveCancellableOpt = Some(schedulerCheck(untilNextRevive))
       } else {
-        logger.info("=> Next revive already scheduled at {} not yet due for {}", nextRevive, untilNextRevive)
+        logger.info(s"=> Next revive already scheduled at $nextRevive not yet due for $untilNextRevive")
       }
     }
-  }
-
-  private[this] def suppressOffers(): Unit = {
-    logger.info("=> Suppress offers NOW")
-    driverHolder.driver.foreach(_.suppressOffers())
   }
 
   override def receive: Receive = LoggingReceive {
@@ -97,23 +93,10 @@ private[impl] class ReviveOffersActor(
   }
 
   private[this] def receiveOffersWantedNotifications: Receive = {
-    case OffersWanted(true) =>
+    case OffersWanted =>
       logger.info("Received offers WANTED notification")
       offersCurrentlyWanted = true
       initiateNewSeriesOfRevives()
-
-    case OffersWanted(false) =>
-      logger.info("Received offers NOT WANTED notification, canceling {} revives", revivesNeeded)
-      offersCurrentlyWanted = false
-      revivesNeeded = 0
-      nextReviveCancellableOpt.foreach(_.cancel())
-      nextReviveCancellableOpt = None
-
-      // When we don't want any more offers, we ask mesos to suppress
-      // them. This alleviates load on the allocator, and acts as an
-      // infinite duration filter for all agents until the next time
-      // we call `Revive`.
-      suppressOffers()
   }
 
   def initiateNewSeriesOfRevives(): Unit = {

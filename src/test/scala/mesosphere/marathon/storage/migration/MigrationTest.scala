@@ -22,9 +22,9 @@ class MigrationTest extends AkkaUnitTest with Mockito with GivenWhenThen {
   private[this] def migration(
     persistenceStore: PersistenceStore[_, _, _] = new InMemoryPersistenceStore(),
     appRepository: AppRepository = mock[AppRepository],
+    podRepository: PodRepository = mock[PodRepository],
     groupRepository: GroupRepository = mock[GroupRepository],
     deploymentRepository: DeploymentRepository = mock[DeploymentRepository],
-    taskRepository: TaskRepository = mock[TaskRepository],
     instanceRepository: InstanceRepository = mock[InstanceRepository],
     taskFailureRepository: TaskFailureRepository = mock[TaskFailureRepository],
     frameworkIdRepository: FrameworkIdRepository = mock[FrameworkIdRepository],
@@ -36,8 +36,8 @@ class MigrationTest extends AkkaUnitTest with Mockito with GivenWhenThen {
     // assume no runtime config is stored in repository
     configurationRepository.get() returns Future.successful(None)
     configurationRepository.store(any) returns Future.successful(Done)
-    new Migration(Set.empty, None, "bridge-name", persistenceStore, appRepository, groupRepository, deploymentRepository,
-      taskRepository, instanceRepository, taskFailureRepository, frameworkIdRepository,
+    new Migration(Set.empty, None, "bridge-name", persistenceStore, appRepository, podRepository, groupRepository, deploymentRepository,
+      instanceRepository, taskFailureRepository, frameworkIdRepository,
       serviceDefinitionRepository, configurationRepository, backup, config)
   }
 
@@ -53,7 +53,7 @@ class MigrationTest extends AkkaUnitTest with Mockito with GivenWhenThen {
       none should be('empty)
 
       val some = migrate.migrations.filter(_._1 < StorageVersions(1, 5, 0, StorageVersion.StorageFormat.PERSISTENCE_STORE))
-      some should have size 1
+      some should have size 2 // we do have two migrations now, 1.4.2 and 1.4.6
     }
 
     "migrate on an empty database will set the storage version" in {

@@ -24,6 +24,10 @@ apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv E56151BF && \
 
   apt-get -y update
 
+# Add github.com to known hosts
+ssh-keyscan github.com >> /home/admin/.ssh/known_hosts
+ssh-keyscan github.com >> /root/.ssh/known_hosts
+
 # Install dependencies
 apt install -t jessie-backports -y openjdk-8-jdk
 update-java-alternatives -s java-1.8.0-openjdk-amd64
@@ -42,6 +46,7 @@ apt-get install -y \
 # Download (but don't install) Mesos and its dependencies.
 # The CI task will install Mesos later.
 apt-get install -y --force-yes --no-install-recommends mesos=$MESOS_VERSION
+systemctl stop mesos-master.service mesos-slave.service mesos_executor.slice
 
 # Add arcanist
 mkdir -p /opt/arcanist

@@ -3,7 +3,7 @@ package core.launcher.impl
 
 import akka.Done
 import mesosphere.UnitTest
-import mesosphere.marathon.core.base.ConstantClock
+import mesosphere.marathon.test.SettableClock
 import mesosphere.marathon.core.condition.Condition
 import mesosphere.marathon.core.instance.TestInstanceBuilder._
 import mesosphere.marathon.core.instance.update.InstanceUpdateOperation
@@ -12,7 +12,7 @@ import mesosphere.marathon.core.launcher.{ InstanceOp, OfferProcessorConfig, Tas
 import mesosphere.marathon.core.matcher.base.OfferMatcher
 import mesosphere.marathon.core.matcher.base.OfferMatcher.{ InstanceOpSource, InstanceOpWithSource, MatchedInstanceOps }
 import mesosphere.marathon.core.task.Task
-import mesosphere.marathon.core.task.state.NetworkInfoPlaceholder
+import mesosphere.marathon.core.task.state.{ AgentInfoPlaceholder, NetworkInfoPlaceholder }
 import mesosphere.marathon.core.task.tracker.InstanceCreationHandler
 import mesosphere.marathon.state.PathId
 import mesosphere.marathon.test.MarathonTestHelper
@@ -40,7 +40,7 @@ class OfferProcessorImplTest extends UnitTest {
 
   case class Fixture(
       conf: OfferProcessorConfig = new OfferProcessorConfig { verify() },
-      clock: ConstantClock = ConstantClock(),
+      clock: SettableClock = new SettableClock(),
       offerMatcher: OfferMatcher = mock[OfferMatcher],
       taskLauncher: TaskLauncher = mock[TaskLauncher],
       taskCreationHandler: InstanceCreationHandler = mock[InstanceCreationHandler]) {
@@ -53,7 +53,7 @@ class OfferProcessorImplTest extends UnitTest {
   object f {
     import org.apache.mesos.{ Protos => Mesos }
     val launch = new InstanceOpFactoryHelper(Some("principal"), Some("role")).launchEphemeral(_: Mesos.TaskInfo, _: Task.LaunchedEphemeral, _: Instance)
-    val launchWithOldTask = new InstanceOpFactoryHelper(Some("principal"), Some("role")).launchOnReservation _
+    val launchWithNewTask = new InstanceOpFactoryHelper(Some("principal"), Some("role")).launchOnReservation _
   }
 
   class DummySource extends InstanceOpSource {
@@ -143,11 +143,13 @@ class OfferProcessorImplTest extends UnitTest {
           val dummyInstance = TestInstanceBuilder.newBuilder(appId).addTaskResidentReserved().getInstance()
           val updateOperation = InstanceUpdateOperation.LaunchOnReservation(
             instanceId = dummyInstance.instanceId,
+            newTaskId = Task.Id.forResidentTask(Task.Id(taskInfo.getTaskId)),
             runSpecVersion = clock.now(),
             timestamp = clock.now(),
             status = Task.Status(clock.now(), condition = Condition.Running, networkInfo = NetworkInfoPlaceholder()),
-            hostPorts = Seq.empty)
-          val launch = f.launchWithOldTask(
+            hostPorts = Seq.empty,
+            agentInfo = AgentInfoPlaceholder())
+          val launch = f.launchWithNewTask(
             taskInfo,
             updateOperation,
             dummyInstance

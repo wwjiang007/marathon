@@ -3,6 +3,7 @@ package integration
 
 import java.util.concurrent.atomic.AtomicInteger
 
+import mesosphere.marathon.api.RestResource
 import mesosphere.marathon.core.health.{ MesosHttpHealthCheck, PortReference }
 import mesosphere.marathon.core.pod._
 import mesosphere.marathon.integration.facades.MarathonFacade._
@@ -294,7 +295,7 @@ class MesosAppIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonT
 
       val createResult = marathon.createPodV2(pod)
       createResult should be(Created)
-      val deploymentId = createResult.originalResponse.headers.find(_.name == "Marathon-Deployment-Id").map(_.value)
+      val deploymentId = createResult.originalResponse.headers.find(_.name == RestResource.DeploymentHeader).map(_.value)
       deploymentId shouldBe defined
 
       Then("the deployment gets created")
@@ -323,7 +324,7 @@ class MesosAppIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonT
 
       val createResult = marathon.createPodV2(pod)
       createResult should be(Created)
-      val deploymentId = createResult.originalResponse.headers.find(_.name == "Marathon-Deployment-Id").map(_.value)
+      val deploymentId = createResult.originalResponse.headers.find(_.name == RestResource.DeploymentHeader).map(_.value)
       deploymentId shouldBe defined
 
       Then("the deployment gets created")
@@ -332,10 +333,16 @@ class MesosAppIntegrationTest extends AkkaIntegrationTest with EmbeddedMarathonT
       When("the deployment is rolled back")
       val deleteResult = marathon.deleteDeployment(deploymentId.get)
       deleteResult should be(OK)
+      val deleteId = deleteResult.originalResponse.headers.find(_.name == RestResource.DeploymentHeader).map(_.value)
+      deleteId shouldBe defined
 
       Then("the deployment should be gone")
-      waitForEvent("deployment_failed") // ScalePod
-      waitForDeployment(deleteResult) // StopPod
+      val waitingFor = Map[String, CallbackEvent => Boolean](
+        "deployment_failed" -> (_.id == deploymentId.value), // StartPod
+        "deployment_success" -> (_.id == deleteId.value) // StopPod
+      )
+      waitForEventsWith(s"waiting for canceled ${deploymentId.value} and successful ${deleteId.value}", waitingFor)
+
       WaitTestSupport.waitUntil("Deployments get removed from the queue") {
         marathon.listDeploymentsForBaseGroup().value.isEmpty
       }

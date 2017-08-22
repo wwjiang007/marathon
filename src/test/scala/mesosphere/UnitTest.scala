@@ -9,7 +9,6 @@ import akka.util.Timeout
 import com.typesafe.config.{ Config, ConfigFactory }
 import com.typesafe.scalalogging.StrictLogging
 import com.wix.accord.{ Failure, Result, Success }
-import kamon.Kamon
 import mesosphere.marathon.Normalization
 import mesosphere.marathon.ValidationFailedException
 import mesosphere.marathon.api.v2.Validation
@@ -22,6 +21,11 @@ import mesosphere.marathon.api.v2.ValidationHelper
 import mesosphere.marathon.integration.setup.RestResult
 
 import scala.concurrent.ExecutionContextExecutor
+
+/**
+  * Tests which fail due to a known issue can be tagged. They are executed but are marked as canceled when they fail.
+  */
+case class KnownIssue(jira: String) extends Tag(s"mesosphere.marathon.KnownIssue:$jira")
 
 /**
   * All integration tests should be marked with this tag.
@@ -39,6 +43,26 @@ object IntegrationTag extends Tag("mesosphere.marathon.IntegrationTest")
   * }}}
   */
 case class WhenEnvSet(envVarName: String, default: String = "false") extends Tag(if (sys.env.getOrElse(envVarName, default) == "true") "" else classOf[Ignore].getName)
+
+trait CancelFailedTestWithKnownIssue extends TestSuite {
+
+  val cancelFailedTestsWithKnownIssue = sys.env.getOrElse("MARATHON_CANCEL_TESTS", "false") == "true"
+  val containsJira = """mesosphere\.marathon\.KnownIssue\:(\S+)""".r
+
+  def knownIssue(testData: TestData): Option[String] = testData.tags.collectFirst{ case containsJira(jira) => jira }
+
+  def markAsCanceledOnFailure(jira: String)(blk: => Outcome): Outcome =
+    blk match {
+      case Failed(ex) => Canceled(s"Known issue $jira: ${ex.getMessage}", ex)
+      case other => other
+    }
+
+  override def withFixture(test: NoArgTest): Outcome = knownIssue(test) match {
+    case Some(jira) if cancelFailedTestsWithKnownIssue => markAsCanceledOnFailure(jira) { super.withFixture(test) }
+    case _ => super.withFixture(test)
+  }
+
+}
 
 trait ValidationTestLike extends Validation {
   this: Assertions =>
@@ -96,14 +120,10 @@ trait UnitTestLike extends WordSpecLike
     with StrictLogging
     with Mockito
     with BeforeAndAfterAll
-    with TimeLimitedTests {
+    with TimeLimitedTests
+    with CancelFailedTestWithKnownIssue {
 
   override val timeLimit = Span(1, Minute)
-
-  override def beforeAll(): Unit = {
-    Kamon.start()
-    super.beforeAll()
-  }
 
   override implicit lazy val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(5, Seconds))
 }
@@ -116,7 +136,6 @@ trait AkkaUnitTestLike extends UnitTestLike with TestKitBase {
       |akka.test.default-timeout=${patienceConfig.timeout.millisPart}
     """.stripMargin).withFallback(ConfigFactory.load())
   implicit lazy val system: ActorSystem = {
-    Kamon.start()
     ActorSystem(suiteName, akkaConfig)
   }
   implicit lazy val scheduler: Scheduler = system.scheduler

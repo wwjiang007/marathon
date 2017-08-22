@@ -1,14 +1,14 @@
 (ns jepsen.mesos
   (:gen-class)
-  (:require [clojure.tools.logging :refer :all]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
+            [clojure.tools.logging :refer :all]
             [clostache.parser :as parser]
-            [jepsen.control :as c]
-            [jepsen.db :as db]
             [jepsen.cli :as cli]
-            [jepsen.tests :as tests]
+            [jepsen.control :as c]
             [jepsen.control.util :as cu]
+            [jepsen.db :as db]
             [jepsen.os.debian :as debian]
+            [jepsen.tests :as tests]
             [jepsen.util :as util :refer [meh timeout]]
             [jepsen.zookeeper :as zk]))
 
@@ -16,6 +16,7 @@
 (def mesos-master-config  "/etc/mesos-master")
 (def mesos-agent-config   "/etc/mesos-slave")
 (def mesos-zookeeper      "/etc/mesos/zk")
+(def mesos-log-dir        "/var/log/mesos")
 
 (defn calculate_quorum
   [test]
@@ -41,7 +42,10 @@
    (c/exec :echo mesos-data-dir :| :tee (str mesos-master-config "/work_dir"))
    (c/exec :echo (str (calculate_quorum test)) :| :tee (str mesos-master-config "/quorum"))
 
-   (c/exec :echo :mesos :| :tee (str mesos-agent-config "/containerizers"))
+   (c/exec :echo (str "mesos") :| :tee (str mesos-agent-config "/containerizers"))
+   (c/exec :echo (str "docker") :| :tee (str mesos-agent-config "/image_providers"))
+   (c/exec :echo (str "docker/runtime,filesystem/linux") :| :tee (str mesos-agent-config "/isolation"))
+   (c/exec :echo (str "10mins") :| :tee (str mesos-agent-config "/executor_registration_timeout"))
    (c/exec :echo node :| :tee (str mesos-agent-config "/hostname"))
    (c/exec :echo node :| :tee (str mesos-agent-config "/ip"))
    (c/exec :echo :5051 :| :tee (str mesos-agent-config "/port"))
@@ -52,8 +56,8 @@
   (info node "Uninstalling Mesos")
   (c/su
    (debian/uninstall! ["mesos"])
-   (c/exec :rm :-rf
-           (c/lit "var/lib/mesos"))
+   (meh (c/exec :rm :-rf
+                (c/lit "var/lib/mesos")))
    (c/exec :rm :-rf
            (c/lit "var/run/mesos"))
    (c/exec :rm :-rf
@@ -102,4 +106,7 @@
       (info node "tearing down mesos cluster..")
       (stop-agent! node)
       (stop-master! node)
-      (uninstall! test node version))))
+      (uninstall! test node version))
+    db/LogFiles
+    (log-files [_ test node]
+      (cu/ls-full mesos-log-dir))))

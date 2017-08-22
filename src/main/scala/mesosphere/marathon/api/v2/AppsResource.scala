@@ -1,6 +1,8 @@
 package mesosphere.marathon
 package api.v2
 
+import java.time.Clock
+
 import java.net.URI
 import javax.inject.Inject
 import javax.servlet.http.HttpServletRequest
@@ -13,7 +15,6 @@ import mesosphere.marathon.api.v2.json.Formats._
 import mesosphere.marathon.api.v2.validation.AppValidation
 import mesosphere.marathon.api.{ AuthResource, MarathonMediaType, PATCH, RestResource }
 import mesosphere.marathon.core.appinfo._
-import mesosphere.marathon.core.base.Clock
 import mesosphere.marathon.core.event.ApiPostEvent
 import mesosphere.marathon.core.group.GroupManager
 import mesosphere.marathon.core.plugin.PluginManager
@@ -44,7 +45,7 @@ class AppsResource @Inject() (
 
   private[this] val ListApps = """^((?:.+/)|)\*$""".r
   private implicit lazy val appDefinitionValidator = AppDefinition.validAppDefinition(config.availableFeatures)(pluginManager)
-  private implicit lazy val validateCanonicalAppUpdateAPI = AppValidation.validateCanonicalAppUpdateAPI(config.availableFeatures)
+  private implicit lazy val validateCanonicalAppUpdateAPI = AppValidation.validateCanonicalAppUpdateAPI(config.availableFeatures, () => normalizationConfig.defaultNetworkName)
 
   private val normalizationConfig = AppNormalization.Configuration(
     config.defaultNetworkName.get,
@@ -236,13 +237,14 @@ class AppsResource @Inject() (
     @PathParam("id") id: String,
     @Context req: HttpServletRequest): Response = authenticated(req) { implicit identity =>
     val appId = id.toRootPath
+    val version = Timestamp.now()
 
     def deleteApp(rootGroup: RootGroup) = {
       checkAuthorization(DeleteRunSpec, rootGroup.app(appId), AppNotFoundException(appId))
-      rootGroup.removeApp(appId)
+      rootGroup.removeApp(appId, version)
     }
 
-    deploymentResult(result(groupManager.updateRoot(appId.parent, deleteApp, force = force)))
+    deploymentResult(result(groupManager.updateRoot(appId.parent, deleteApp, version = version, force = force)))
   }
 
   @Path("{appId:.+}/tasks")
@@ -294,7 +296,9 @@ class AppsResource @Inject() (
     assumeValid {
       val appUpdate = canonicalAppUpdateFromJson(appId, body, partialUpdate)
       val version = clock.now()
-      val plan = result(groupManager.updateApp(appId, updateOrCreate(appId, _, appUpdate, partialUpdate, allowCreation), version, force))
+      val plan = result(groupManager.updateApp(
+        appId, updateOrCreate(appId, _, appUpdate, partialUpdate, allowCreation),
+        version, force))
       val response = plan.original.app(appId)
         .map(_ => Response.ok())
         .getOrElse(Response.created(new URI(appId.toString)))
@@ -324,7 +328,9 @@ class AppsResource @Inject() (
 
       def updateGroup(rootGroup: RootGroup): RootGroup = updates.foldLeft(rootGroup) { (group, update) =>
         update.id.map(PathId(_)) match {
-          case Some(id) => group.updateApp(id, updateOrCreate(id, _, update, partialUpdate, allowCreation = allowCreation), version)
+          case Some(id) =>
+            group.updateApp(
+              id, updateOrCreate(id, _, update, partialUpdate, allowCreation = allowCreation), version)
           case None => group
         }
       }
@@ -408,14 +414,14 @@ object AppsResource {
   def appNormalization(config: NormalizationConfig): Normalization[raml.App] = Normalization { app =>
     validateOrThrow(app)(AppValidation.validateOldAppAPI)
     val migrated = AppNormalization.forDeprecated(config.config).normalized(app)
-    validateOrThrow(migrated)(AppValidation.validateCanonicalAppAPI(config.enabledFeatures))
+    validateOrThrow(migrated)(AppValidation.validateCanonicalAppAPI(config.enabledFeatures, () => config.config.defaultNetworkName))
     AppNormalization(config.config).normalized(migrated)
   }
 
   def appUpdateNormalization(config: NormalizationConfig): Normalization[raml.AppUpdate] = Normalization { app =>
     validateOrThrow(app)(AppValidation.validateOldAppUpdateAPI)
     val migrated = AppNormalization.forDeprecatedUpdates(config.config).normalized(app)
-    validateOrThrow(app)(AppValidation.validateCanonicalAppUpdateAPI(config.enabledFeatures))
+    validateOrThrow(app)(AppValidation.validateCanonicalAppUpdateAPI(config.enabledFeatures, () => config.config.defaultNetworkName))
     AppNormalization.forUpdates(config.config).normalized(migrated)
   }
 
