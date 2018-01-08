@@ -8,12 +8,11 @@ import mesosphere.mesos.protos.Implicits._
 
 import scala.concurrent.duration._
 
-trait AppConversion extends ConstraintConversion with EnvVarConversion with HealthCheckConversion
-    with NetworkConversion with ReadinessConversions with SecretConversion with VolumeConversion with UnreachableStrategyConversion with KillSelectionConversion {
+trait AppConversion extends DefaultConversions with ConstraintConversion with EnvVarConversion with HealthCheckConversion
+  with NetworkConversion with ReadinessConversions with SecretConversion with VolumeConversion
+  with UnreachableStrategyConversion with KillSelectionConversion {
 
   import AppConversion._
-
-  implicit val pathIdWrites: Writes[PathId, String] = Writes { _.toString }
 
   implicit val artifactWrites: Writes[FetchUri, Artifact] = Writes { fetch =>
     Artifact(fetch.uri, fetch.extract, fetch.executable, fetch.cache, fetch.outputFile)
@@ -21,10 +20,6 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
 
   implicit val upgradeStrategyWrites: Writes[state.UpgradeStrategy, UpgradeStrategy] = Writes { strategy =>
     UpgradeStrategy(strategy.maximumOverCapacity, strategy.minimumHealthCapacity)
-  }
-
-  implicit val appResidencyWrites: Writes[Residency, AppResidency] = Writes { residency =>
-    AppResidency(residency.relaunchEscalationTimeoutSeconds, residency.taskLostBehavior.toRaml)
   }
 
   implicit val versionInfoWrites: Writes[state.VersionInfo, Option[VersionInfo]] = Writes {
@@ -65,7 +60,15 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
       ports = None, // deprecated field
       portDefinitions = if (app.networks.hasNonHostNetworking) None else Some(app.portDefinitions.toRaml),
       readinessChecks = app.readinessChecks.toRaml,
-      residency = app.residency.toRaml,
+      residency = if (app.isResident)
+        app.unreachableStrategy match {
+        case state.UnreachableDisabled => Some(AppResidency())
+        case state.UnreachableEnabled(inactiveAfterSeconds, _) => Some(AppResidency(
+          relaunchEscalationTimeoutSeconds = inactiveAfterSeconds.toSeconds,
+          taskLostBehavior = TaskLostBehavior.WaitForever
+        ))
+      }
+      else None,
       requirePorts = app.requirePorts,
       secrets = app.secrets.toRaml,
       taskKillGracePeriodSeconds = app.taskKillGracePeriod.map(_.toSeconds.toInt),
@@ -96,13 +99,6 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
     }
   }
 
-  implicit val residencyRamlReader: Reads[AppResidency, Residency] = Reads { residency =>
-    Residency(
-      relaunchEscalationTimeoutSeconds = residency.relaunchEscalationTimeoutSeconds,
-      taskLostBehavior = residency.taskLostBehavior.fromRaml
-    )
-  }
-
   implicit val fetchUriReader: Reads[Artifact, FetchUri] = Reads { artifact =>
     FetchUri(
       uri = artifact.uri,
@@ -125,8 +121,7 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
     * has a `versionInfo` constructed from `OnlyVersion(app.version)`.
     */
   implicit val appRamlReader: Reads[App, AppDefinition] = Reads[App, AppDefinition] { app =>
-    val selectedStrategy = ResidencyAndUpgradeStrategy(
-      app.residency.map(Raml.fromRaml(_)),
+    val selectedStrategy: state.UpgradeStrategy = UpgradeStrategyConverter(
       app.upgradeStrategy.map(Raml.fromRaml(_)),
       hasPersistentVolumes = app.container.exists(_.volumes.existsAn[AppPersistentVolume]),
       hasExternalVolumes = app.container.exists(_.volumes.existsAn[AppExternalVolume])
@@ -159,12 +154,11 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
       readinessChecks = app.readinessChecks.map(Raml.fromRaml(_)),
       taskKillGracePeriod = app.taskKillGracePeriodSeconds.map(_.second),
       dependencies = app.dependencies.map(PathId(_))(collection.breakOut),
-      upgradeStrategy = selectedStrategy.upgradeStrategy,
+      upgradeStrategy = selectedStrategy,
       labels = app.labels,
       acceptedResourceRoles = app.acceptedResourceRoles.getOrElse(AppDefinition.DefaultAcceptedResourceRoles),
       networks = app.networks.map(Raml.fromRaml(_)),
       versionInfo = versionInfo,
-      residency = selectedStrategy.residency,
       secrets = Raml.fromRaml(app.secrets),
       unreachableStrategy = app.unreachableStrategy.map(_.fromRaml).getOrElse(AppDefinition.DefaultUnreachableStrategy),
       killSelection = app.killSelection.fromRaml,
@@ -309,6 +303,20 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
       ))
       else None
 
+    val unreachableStrategy: Option[raml.UnreachableStrategy] = service.when(_.hasUnreachableStrategy, _.getUnreachableStrategy.toRaml).orElse(App.DefaultUnreachableStrategy)
+
+    val hasPersistentVolumes = service.hasContainer && service.getContainer.getVolumesList.exists(_.hasPersistent)
+
+    val residency = if (hasPersistentVolumes || service.hasResidency) {
+      unreachableStrategy.flatMap {
+        case raml.UnreachableDisabled(_) => Some(AppResidency())
+        case raml.UnreachableEnabled(inactiveAfterSeconds, _) => Some(AppResidency(
+          relaunchEscalationTimeoutSeconds = inactiveAfterSeconds,
+          taskLostBehavior = TaskLostBehavior.WaitForever
+        ))
+      }
+    } else App.DefaultResidency
+
     val app = App(
       id = service.getId,
       acceptedResourceRoles = if (service.hasAcceptedResourceRoles && service.getAcceptedResourceRoles.getRoleCount > 0) Option(service.getAcceptedResourceRoles.getRoleList.to[Set]) else App.DefaultAcceptedResourceRoles,
@@ -336,7 +344,7 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
       portDefinitions = Option(Seq.empty[PortDefinition]).unless( // the RAML default is None, which is not what an empty proto port collection means.
         service.when(_.getPortDefinitionsCount > 0, _.getPortDefinitionsList.map(_.toRaml[PortDefinition])(collection.breakOut))),
       readinessChecks = service.whenOrElse(_.getReadinessCheckDefinitionCount > 0, _.getReadinessCheckDefinitionList.toRaml, App.DefaultReadinessChecks),
-      residency = service.when(_.hasResidency, _.getResidency.toRaml).orElse(App.DefaultResidency),
+      residency = residency,
       requirePorts = service.whenOrElse(_.hasRequirePorts, _.getRequirePorts, App.DefaultRequirePorts),
       secrets = service.whenOrElse(_.getSecretsCount > 0, _.getSecretsList.map(_.toRaml)(collection.breakOut), App.DefaultSecrets),
       taskKillGracePeriodSeconds = service.when(_.hasTaskKillGracePeriod, _.getTaskKillGracePeriod.toInt).orElse(App.DefaultTaskKillGracePeriodSeconds),
@@ -346,7 +354,7 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
       version = version,
       versionInfo = versionInfo, // we restore this but App-to-AppDefinition conversion drops it...
       killSelection = service.whenOrElse(_.hasKillSelection, _.getKillSelection.toRaml, App.DefaultKillSelection),
-      unreachableStrategy = service.when(_.hasUnreachableStrategy, _.getUnreachableStrategy.toRaml).orElse(App.DefaultUnreachableStrategy),
+      unreachableStrategy = unreachableStrategy,
       tty = service.when(_.hasTty, _.getTty: Boolean).orElse(App.DefaultTty)
     )
     // special ports normalization when converting from protobuf, because the protos don't allow us to distinguish
@@ -414,25 +422,19 @@ trait AppConversion extends ConstraintConversion with EnvVarConversion with Heal
 
 object AppConversion extends AppConversion {
 
-  case class ResidencyAndUpgradeStrategy(residency: Option[Residency], upgradeStrategy: state.UpgradeStrategy)
-
-  object ResidencyAndUpgradeStrategy {
+  object UpgradeStrategyConverter {
     def apply(
-      residency: Option[Residency],
       upgradeStrategy: Option[state.UpgradeStrategy],
       hasPersistentVolumes: Boolean,
-      hasExternalVolumes: Boolean): ResidencyAndUpgradeStrategy = {
+      hasExternalVolumes: Boolean): state.UpgradeStrategy = {
 
       import state.UpgradeStrategy.{ empty, forResidentTasks }
 
-      val residencyOrDefault: Option[Residency] =
-        residency.orElse(if (hasPersistentVolumes) Some(Residency.default) else None)
-
       val selectedUpgradeStrategy = upgradeStrategy.getOrElse {
-        if (residencyOrDefault.isDefined || hasExternalVolumes) forResidentTasks else empty
+        if (hasPersistentVolumes || hasExternalVolumes) forResidentTasks else empty
       }
 
-      ResidencyAndUpgradeStrategy(residencyOrDefault, selectedUpgradeStrategy)
+      selectedUpgradeStrategy
     }
   }
 }

@@ -35,7 +35,7 @@ import scala.util.Random
   */
 case class LazyCachingPersistenceStore[K, Category, Serialized](
     store: BasePersistenceStore[K, Category, Serialized])(implicit
-  mat: Materializer,
+    mat: Materializer,
     ctx: ExecutionContext) extends PersistenceStore[K, Category, Serialized] with StrictLogging {
 
   private val lock = KeyedLock[String]("LazyCachingStore", Int.MaxValue)
@@ -43,6 +43,10 @@ case class LazyCachingPersistenceStore[K, Category, Serialized](
   private[store] val valueCache = TrieMap.empty[K, Option[Any]]
   private[this] val getHitCounters = TrieMap.empty[Category, Counter]
   private[this] val idsHitCounters = TrieMap.empty[Category, Counter]
+
+  override def markOpen(): Unit = store.markOpen()
+  override def markClosed(): Unit = store.markClosed()
+  override def isOpen: Boolean = store.isOpen
 
   override def storageVersion(): Future[Option[StorageVersion]] = store.storageVersion()
 
@@ -56,7 +60,7 @@ case class LazyCachingPersistenceStore[K, Category, Serialized](
       if (idCache.contains(category)) {
         // TODO - remove special name when MARATHON-7618 is addressed
         idsHitCounters.getOrElseUpdate(ir.category, Metrics.counter(
-          ServiceMetric, getClass, s"ids:${ir.category}:hit", Map("result" -> "hit", "category" -> ir.category.toString))).increment()
+          ServiceMetric, getClass, s"ids.${ir.category}.hit", Map("result" -> "hit", "category" -> ir.category.toString))).increment()
         Future.successful(idCache(category).asInstanceOf[Set[Id]])
       } else {
         async {
@@ -112,7 +116,7 @@ case class LazyCachingPersistenceStore[K, Category, Serialized](
         case Some(v: Option[V] @unchecked) =>
           // TODO - remove special name when MARATHON-7618 is addressed
           getHitCounters.getOrElseUpdate(ir.category, Metrics.counter(
-            ServiceMetric, getClass, s"get:${ir.category}:hit", Map("result" -> "hit", "category" -> ir.category.toString))).increment()
+            ServiceMetric, getClass, s"get.${ir.category}.hit", Map("result" -> "hit", "category" -> ir.category.toString))).increment()
           Future.successful(v)
         case _ =>
           async { // linter:ignore UnnecessaryElseBranch
@@ -158,7 +162,6 @@ case class LazyCachingPersistenceStore[K, Category, Serialized](
     ir: IdResolver[Id, V, Category, K],
     m: Marshaller[V, Serialized]): Future[Done] = {
     val category = ir.category
-    val storageId = ir.toStorageId(id, None)
     lock(category.toString) {
       async {
         await(store.store(id, v, version))
@@ -181,14 +184,24 @@ case class LazyCachingPersistenceStore[K, Category, Serialized](
 
   override def restore(): ScalaSink[BackupItem, Future[Done]] = store.restore()
 
+  override def sync(): Future[Done] = store.sync()
+
+  override def startMigration(): Future[Done] = store.startMigration()
+
+  override def endMigration(): Future[Done] = store.endMigration()
+
   override def toString: String = s"LazyCachingPersistenceStore($store)"
 }
 
 case class LazyVersionCachingPersistentStore[K, Category, Serialized](
     store: PersistenceStore[K, Category, Serialized],
     config: VersionCacheConfig = VersionCacheConfig.Default)(implicit
-  mat: Materializer,
+    mat: Materializer,
     ctx: ExecutionContext) extends PersistenceStore[K, Category, Serialized] with StrictLogging {
+
+  override def markOpen(): Unit = store.markOpen()
+  override def markClosed(): Unit = store.markClosed()
+  override def isOpen: Boolean = store.isOpen
 
   private[store] val versionCache = TrieMap.empty[(Category, K), Set[OffsetDateTime]]
   private[store] val versionedValueCache = TrieMap.empty[(K, OffsetDateTime), Option[Any]]
@@ -273,7 +286,7 @@ case class LazyVersionCachingPersistentStore[K, Category, Serialized](
       case Some(v: Option[V] @unchecked) =>
         // TODO - remove special name when MARATHON-7618 is addressed
         hitCounters.getOrElseUpdate(ir.category, Metrics.counter(
-          ServiceMetric, getClass, s"get:${ir.category}:hit", Map("result" -> "hit", "category" -> ir.category.toString))).increment()
+          ServiceMetric, getClass, s"get.${ir.category}.hit", Map("result" -> "hit", "category" -> ir.category.toString))).increment()
         Future.successful(v)
       case _ =>
         async {
@@ -360,6 +373,12 @@ case class LazyVersionCachingPersistentStore[K, Category, Serialized](
   override def backup(): Source[BackupItem, NotUsed] = store.backup()
 
   override def restore(): ScalaSink[BackupItem, Future[Done]] = store.restore()
+
+  override def sync(): Future[Done] = store.sync()
+
+  override def startMigration(): Future[Done] = store.startMigration()
+
+  override def endMigration(): Future[Done] = store.endMigration()
 
   override def toString: String = s"LazyVersionCachingPersistenceStore($store)"
 }

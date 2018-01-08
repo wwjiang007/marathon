@@ -10,7 +10,7 @@ import mesosphere.marathon.core.instance.Instance
 import mesosphere.marathon.core.instance.update.InstanceUpdateOperation
 import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.core.task.termination.{ KillReason, KillService }
-import mesosphere.marathon.core.task.tracker.{ InstanceTracker, TaskStateOpProcessor }
+import mesosphere.marathon.core.task.tracker.{ InstanceTracker, InstanceStateOpProcessor }
 import mesosphere.marathon.state.Timestamp
 import org.slf4j.LoggerFactory
 
@@ -22,10 +22,10 @@ private[jobs] object OverdueTasksActor {
   def props(
     config: MarathonConf,
     taskTracker: InstanceTracker,
-    taskStateOpProcessor: TaskStateOpProcessor,
+    stateOpProcessor: InstanceStateOpProcessor,
     killService: KillService,
     clock: Clock): Props = {
-    Props(new OverdueTasksActor(new Support(config, taskTracker, taskStateOpProcessor, killService, clock)))
+    Props(new OverdueTasksActor(new Support(config, taskTracker, stateOpProcessor, killService, clock)))
   }
 
   /**
@@ -34,7 +34,7 @@ private[jobs] object OverdueTasksActor {
   private class Support(
       config: MarathonConf,
       taskTracker: InstanceTracker,
-      taskStateOpProcessor: TaskStateOpProcessor,
+      stateOpProcessor: InstanceStateOpProcessor,
       killService: KillService,
       clock: Clock) extends StrictLogging {
     import mesosphere.marathon.core.async.ExecutionContexts.global
@@ -88,17 +88,15 @@ private[jobs] object OverdueTasksActor {
     private[this] def timeoutOverdueReservations(now: Timestamp, instances: Seq[Instance]): Future[Unit] = {
       val taskTimeoutResults = overdueReservations(now, instances).map { instance =>
         logger.warn("Scheduling ReservationTimeout for {}", instance.instanceId)
-        taskStateOpProcessor.process(InstanceUpdateOperation.ReservationTimeout(instance.instanceId))
+        stateOpProcessor.process(InstanceUpdateOperation.ReservationTimeout(instance.instanceId))
       }
       Future.sequence(taskTimeoutResults).map(_ => ())
     }
 
     private[this] def overdueReservations(now: Timestamp, instances: Seq[Instance]): Seq[Instance] = {
-      // TODO PODs is an Instance overdue if a single task is overdue? / move reservation to instance level
       instances.filter { instance =>
-        Task.reservedTasks(instance.tasksMap.values).exists { (task: Task.Reserved) =>
-          task.reservation.state.timeout.exists(_.deadline <= now)
-        }
+        val reservedTasks = instance.tasksMap.values.filter(_.status.condition == Condition.Reserved)
+        reservedTasks.nonEmpty && instance.reservation.exists(_.state.timeout.exists(_.deadline <= now))
       }
     }
   }
@@ -133,7 +131,7 @@ private class OverdueTasksActor(support: OverdueTasksActor.Support) extends Acto
 
         case None =>
           import context.dispatcher
-          resultFuture.onFailure { case NonFatal(e) => log.warn("error while checking for overdue tasks", e) }
+          resultFuture.failed.foreach { case NonFatal(e) => log.warn("error while checking for overdue tasks", e) }
       }
   }
 }

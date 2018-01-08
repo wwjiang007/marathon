@@ -7,7 +7,7 @@ import javax.servlet.http.HttpServletRequest
 import javax.ws.rs._
 import javax.ws.rs.core.{ Context, MediaType, Response }
 
-import mesosphere.marathon.api.v2.json.Formats._
+import mesosphere.marathon.api.EndpointsHelper.ListTasks
 import mesosphere.marathon.api.{ EndpointsHelper, MarathonMediaType, TaskKiller, _ }
 import mesosphere.marathon.core.appinfo.EnrichedTask
 import mesosphere.marathon.core.async.ExecutionContexts
@@ -19,7 +19,10 @@ import mesosphere.marathon.core.instance.Instance.Id
 import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.core.task.tracker.InstanceTracker
 import mesosphere.marathon.plugin.auth.{ Authenticator, Authorizer, UpdateRunSpec, ViewRunSpec }
-import mesosphere.marathon.state.{ AppDefinition, PathId }
+import mesosphere.marathon.raml.AnyToRaml
+import mesosphere.marathon.raml.Task._
+import mesosphere.marathon.raml.TaskConversion._
+import mesosphere.marathon.state.PathId
 import mesosphere.marathon.stream.Implicits._
 import org.slf4j.LoggerFactory
 import play.api.libs.json.Json
@@ -58,9 +61,7 @@ class TasksResource @Inject() (
       }
       val appIds: Set[PathId] = instancesBySpec.allSpecIdsWithInstances
 
-      //TODO: Move to GroupManager.
-      val appIdsToApps: Map[PathId, Option[AppDefinition]] =
-        appIds.map(appId => appId -> groupManager.app(appId))(collection.breakOut)
+      val appIdsToApps = groupManager.apps(appIds)
 
       val appToPorts: Map[PathId, Seq[Int]] = appIdsToApps.map {
         case (appId, app) => appId -> app.map(_.servicePorts).getOrElse(Nil)
@@ -78,13 +79,8 @@ class TasksResource @Inject() (
         tasks = instance.tasksMap.values
       } yield {
         tasks.map { task =>
-          EnrichedTask(
-            appId,
-            task,
-            instance.agentInfo,
-            health.getOrElse(instance.instanceId, Nil),
-            appToPorts.getOrElse(appId, Nil)
-          )
+          EnrichedTask(instance, task, health.getOrElse(instance.instanceId, Nil),
+            appToPorts.getOrElse(appId, Nil))
         }
       }
       enrichedTasks.flatten
@@ -92,7 +88,7 @@ class TasksResource @Inject() (
 
     val enrichedTasks: Iterable[EnrichedTask] = result(futureEnrichedTasks)
     ok(jsonObjString(
-      "tasks" -> enrichedTasks
+      "tasks" -> enrichedTasks.toIndexedSeq.toRaml
     ))
   }
 
@@ -104,8 +100,7 @@ class TasksResource @Inject() (
       val instancesBySpec = await(instanceTracker.instancesBySpec)
       val rootGroup = groupManager.rootGroup()
       val appsToEndpointString = EndpointsHelper.appsToEndpointString(
-        instancesBySpec,
-        rootGroup.transitiveApps.filterAs(app => isAuthorized(ViewRunSpec, app))(collection.breakOut)
+        ListTasks(instancesBySpec, rootGroup.transitiveApps.filterAs(app => isAuthorized(ViewRunSpec, app))(collection.breakOut))
       )
       ok(appsToEndpointString)
     })
@@ -148,7 +143,7 @@ class TasksResource @Inject() (
         })).flatten
       ok(jsonObjString("tasks" -> killed.flatMap { instance =>
         instance.tasksMap.valuesIterator.map { task =>
-          EnrichedTask(task.runSpecId, task, instance.agentInfo, Seq.empty)
+          EnrichedTask(instance, task, Nil).toRaml
         }
       }))
     }

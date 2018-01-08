@@ -3,11 +3,9 @@ package core.launcher.impl
 
 import mesosphere.marathon.core.instance.Instance
 import mesosphere.marathon.core.instance.update.InstanceUpdateOperation
-import mesosphere.marathon.core.launcher.InstanceOp
+import mesosphere.marathon.core.launcher.{ InstanceOp, InstanceOpFactory }
 import mesosphere.marathon.core.matcher.base.util.OfferOperationFactory
 import mesosphere.marathon.core.task.Task
-import mesosphere.marathon.core.task.Task.LocalVolume
-import mesosphere.marathon.state.DiskSource
 import org.apache.mesos.{ Protos => Mesos }
 
 class InstanceOpFactoryHelper(
@@ -18,7 +16,7 @@ class InstanceOpFactoryHelper(
 
   def launchEphemeral(
     taskInfo: Mesos.TaskInfo,
-    newTask: Task.LaunchedEphemeral,
+    newTask: Task,
     instance: Instance): InstanceOp.LaunchTask = {
 
     assume(newTask.taskId.mesosTaskId == taskInfo.getTaskId, "marathon task id and mesos task id must be equal")
@@ -58,6 +56,17 @@ class InstanceOpFactoryHelper(
     InstanceOp.LaunchTask(taskInfo, newState, Some(oldState), createOperations)
   }
 
+  def launchOnReservation(
+    executorInfo: Mesos.ExecutorInfo,
+    groupInfo: Mesos.TaskGroupInfo,
+    newState: InstanceUpdateOperation.LaunchOnReservation,
+    oldState: Instance): InstanceOp.LaunchTaskGroup = {
+
+    def createOperations = Seq(offerOperationFactory.launch(executorInfo, groupInfo))
+
+    InstanceOp.LaunchTaskGroup(executorInfo, groupInfo, newState, Some(oldState), createOperations)
+  }
+
   /**
     * Returns a set of operations to reserve ALL resources (cpu, mem, ports, disk, etc.) and then create persistent
     * volumes against them as needed
@@ -67,13 +76,11 @@ class InstanceOpFactoryHelper(
     reservationLabels: ReservationLabels,
     newState: InstanceUpdateOperation.Reserve,
     resources: Seq[Mesos.Resource],
-    localVolumes: Seq[(DiskSource, LocalVolume)]): InstanceOp.ReserveAndCreateVolumes = {
+    localVolumes: Seq[InstanceOpFactory.OfferedVolume]): InstanceOp.ReserveAndCreateVolumes = {
 
-    def createOperations = Seq(
-      offerOperationFactory.reserve(reservationLabels, resources),
-      offerOperationFactory.createVolumes(
-        reservationLabels,
-        localVolumes))
+    def createOperations =
+      offerOperationFactory.reserve(reservationLabels, resources) ++
+        offerOperationFactory.createVolumes(reservationLabels, localVolumes)
 
     InstanceOp.ReserveAndCreateVolumes(newState, resources, createOperations)
   }

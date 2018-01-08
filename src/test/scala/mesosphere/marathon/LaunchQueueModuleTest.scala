@@ -2,6 +2,7 @@ package mesosphere.marathon
 
 import java.time.Clock
 
+import com.google.inject.Provider
 import mesosphere.AkkaUnitTest
 import mesosphere.marathon.core.instance.TestInstanceBuilder
 import mesosphere.marathon.core.instance.TestInstanceBuilder._
@@ -13,7 +14,7 @@ import mesosphere.marathon.core.leadership.AlwaysElectedLeadershipModule
 import mesosphere.marathon.core.matcher.DummyOfferMatcherManager
 import mesosphere.marathon.core.matcher.base.util.OfferMatcherSpec
 import mesosphere.marathon.core.task.Task
-import mesosphere.marathon.core.task.bus.{ TaskBusModule, TaskStatusUpdateTestHelper }
+import mesosphere.marathon.core.task.bus.TaskStatusUpdateTestHelper
 import mesosphere.marathon.core.task.tracker.InstanceTracker
 import mesosphere.marathon.integration.setup.WaitTestSupport
 import mesosphere.marathon.state.PathId
@@ -166,7 +167,6 @@ class LaunchQueueModuleTest extends AkkaUnitTest with OfferMatcherSpec {
 
       When("we ask for matching an offer")
       instanceOpFactory.matchOfferRequest(Matchers.any()) returns noMatchResult
-      val now = clock.now()
       val matchFuture = offerMatcherManager.offerMatchers.head.matchOffer(offer)
       val matchedTasks = matchFuture.futureValue
 
@@ -193,7 +193,6 @@ class LaunchQueueModuleTest extends AkkaUnitTest with OfferMatcherSpec {
 
       When("we ask for matching an offer")
       instanceOpFactory.matchOfferRequest(Matchers.any()) returns launchResult
-      val now = clock.now()
       val matchFuture = offerMatcherManager.offerMatchers.head.matchOffer(offer)
       val matchedTasks = matchFuture.futureValue
 
@@ -221,7 +220,6 @@ class LaunchQueueModuleTest extends AkkaUnitTest with OfferMatcherSpec {
 
       And("a task gets launched but not confirmed")
       instanceOpFactory.matchOfferRequest(Matchers.any()) returns launchResult
-      val now = clock.now()
       val matchFuture = offerMatcherManager.offerMatchers.head.matchOffer(offer)
       matchFuture.futureValue
 
@@ -246,7 +244,7 @@ class LaunchQueueModuleTest extends AkkaUnitTest with OfferMatcherSpec {
     val offer = MarathonTestHelper.makeBasicOffer().build()
     val runspecId = PathId("/test")
     val instance = TestInstanceBuilder.newBuilder(runspecId).addTaskWithBuilder().taskRunning().build().getInstance()
-    val task: Task.LaunchedEphemeral = instance.appTask
+    val task: Task = instance.appTask
 
     val mesosTask = MarathonTestHelper.makeOneCPUTask(task.taskId).build()
     val launch = new InstanceOpFactoryHelper(Some("principal"), Some("role")).
@@ -259,12 +257,12 @@ class LaunchQueueModuleTest extends AkkaUnitTest with OfferMatcherSpec {
     val noMatchResult = OfferMatchResult.NoMatch(app, offer, Seq.empty, clock.now())
     val launchResult = OfferMatchResult.Match(app, offer, launch, clock.now())
 
-    lazy val taskBusModule: TaskBusModule = new TaskBusModule()
     lazy val offerMatcherManager: DummyOfferMatcherManager = new DummyOfferMatcherManager()
     lazy val instanceTracker: InstanceTracker = mock[InstanceTracker]
     lazy val instanceOpFactory: InstanceOpFactory = mock[InstanceOpFactory]
     lazy val config = MarathonTestHelper.defaultConfig()
     lazy val parentActor = newTestActor()
+    lazy val localRegion = () => None
 
     lazy val module: LaunchQueueModule = new LaunchQueueModule(
       config,
@@ -273,7 +271,8 @@ class LaunchQueueModuleTest extends AkkaUnitTest with OfferMatcherSpec {
       subOfferMatcherManager = offerMatcherManager,
       maybeOfferReviver = None,
       instanceTracker,
-      instanceOpFactory
+      instanceOpFactory,
+      localRegion
     )
 
     def launchQueue = module.launchQueue

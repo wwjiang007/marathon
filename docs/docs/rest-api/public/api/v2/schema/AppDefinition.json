@@ -284,6 +284,11 @@
                     "description": "Optional maximum size of an exclusive mount-disk resource to consider; does not apply to root or path disk resource types",
                     "minimum": 0
                   },
+                  "profileName": {
+                    "type": "string",
+                    "description": "The storage volume profile. Only volumes with the specified profile are used to launch an application. It this option is not given, any volume (with or without a profile) will be used for launching.",
+                    "minLength": 1
+                  },
                   "constraints": {
                     "type": "array",
                     "items": {
@@ -480,6 +485,11 @@
             "type": "string",
             "description": "Protocol of the requests to be performed. One of HTTP, HTTPS, TCP, COMMAND, MESOS_HTTP, MESOS_HTTPS or MESOS_TCP.",
             "enum": ["HTTP", "HTTPS", "TCP", "COMMAND", "MESOS_HTTP", "MESOS_HTTPS", "MESOS_TCP"]
+          },
+          "ipProtocol": {
+            "type": "string",
+            "description": "Protocol of the requests to be performed. One of HTTP, HTTPS, TCP, COMMAND, MESOS_HTTP, MESOS_HTTPS or MESOS_TCP.",
+            "enum": ["IPv4", "IPv6"]
           },
           "timeoutSeconds": {
             "type": "integer",
@@ -824,13 +834,13 @@
           "properties": {
             "inactiveAfterSeconds": {
               "type": "integer",
-              "description": "If an instance is unreachable for longer than inactiveAfter seconds it is marked as inactive. This will trigger a new instance launch. The original task is not expunged yet. Must be less than expungeAfterSeconds.",
-              "minimum": 1
+              "description": "If an instance is unreachable for longer than inactiveAfter seconds it is marked as inactive. This will trigger a new instance launch. The original task is not expunged yet. Must be less than or equal to expungeAfterSeconds.",
+              "minimum": 0
             },
             "expungeAfterSeconds": {
               "type": "number",
-              "description": "If an instance is unreachable for longer than unreachableExpungeAfter seconds it will be expunged.  That means it will be killed if it ever comes back. Instances are usually marked as unreachable before they are expunged but they don't have to. This value is required to be greater than inactiveAfterSeconds.\n\nIf the instance has any persistent volumes associated with it, then they will be destroyed and associated data will be deleted.\n\nDefault is 7 days (604800 seconds).",
-              "minimum": 2
+              "description": "If an instance is unreachable for longer than expungeAfterSeconds it will be expunged.  That means it will be killed if it ever comes back. Instances are usually marked as unreachable before they are expunged but they don't have to. This value is required to be greater than inactiveAfterSeconds unless both are zero.\n\nIf the instance has any persistent volumes associated with it, then they will be destroyed and associated data will be deleted.\n\nDefault is 0 seconds.",
+              "minimum": 0
             }
           }
         }

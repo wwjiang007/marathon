@@ -5,17 +5,15 @@ import json
 import os
 import pods
 import pytest
-import retrying
 import shakedown
 import time
 
 from datetime import timedelta
 from dcos import marathon, http
-from shakedown import dcos_version_less_than, marthon_version_less_than, required_private_agents
+from shakedown import dcos_version_less_than, marthon_version_less_than, required_private_agents # NOQA
 from urllib.parse import urljoin
 
-from fixtures import wait_for_marathon_and_cleanup
-from utils import parse_json
+from fixtures import sse_events, wait_for_marathon_and_cleanup # NOQA
 
 
 PACKAGE_NAME = 'marathon'
@@ -33,7 +31,7 @@ def get_pod_status_url(pod_id):
 
 def get_pod_status(pod_id):
     url = urljoin(DCOS_SERVICE_URL, get_pod_status_url(pod_id))
-    return parse_json(http.get(url))
+    return http.get(url).json()
 
 
 def get_pod_instances_url(pod_id, instance_id):
@@ -50,12 +48,12 @@ def get_pod_versions_url(pod_id, version_id=""):
 
 def get_pod_versions(pod_id):
     url = urljoin(DCOS_SERVICE_URL, get_pod_versions_url(pod_id))
-    return parse_json(http.get(url))
+    return http.get(url).json()
 
 
 def get_pod_version(pod_id, version_id):
     url = urljoin(DCOS_SERVICE_URL, get_pod_versions_url(pod_id, version_id))
-    return parse_json(http.get(url))
+    return http.get(url).json()
 
 
 @shakedown.dcos_1_9
@@ -63,12 +61,13 @@ def test_create_pod():
     """Launch simple pod in DC/OS root marathon."""
 
     pod_def = pods.simple_pod()
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    pod = client.show_pod(pod_def["id"])
+    pod = client.show_pod(pod_id)
     assert pod is not None, "The pod has not been created"
 
 
@@ -84,55 +83,53 @@ def test_create_pod_with_private_image():
     username = os.environ['DOCKER_HUB_USERNAME']
     password = os.environ['DOCKER_HUB_PASSWORD']
 
-    secret_name = "pullConfig"
+    secret_name = "pullconfig"
     secret_value_json = common.create_docker_pull_config_json(username, password)
     secret_value = json.dumps(secret_value_json)
 
     pod_def = pods.private_docker_pod()
+    pod_id = pod_def['id']
     common.create_secret(secret_name, secret_value)
     client = marathon.create_client()
 
     try:
         client.add_pod(pod_def)
-        shakedown.deployment_wait(timeout=timedelta(minutes=5).total_seconds())
-        pod = client.show_pod(pod_def["id"])
+        common.deployment_wait(timeout=timedelta(minutes=5).total_seconds(), service_id=pod_id)
+        pod = client.show_pod(pod_id)
         assert pod is not None, "The pod has not been created"
     finally:
         common.delete_secret(secret_name)
 
 
-@shakedown.dcos_1_9
-@pytest.mark.usefixtures("wait_for_marathon_and_cleanup", "events_to_file")
-def test_event_channel_for_pods():
+@shakedown.dcos_1_9 # NOQA F811
+@pytest.mark.usefixtures("wait_for_marathon_and_cleanup")
+@pytest.mark.asyncio
+async def test_event_channel_for_pods(sse_events):
     """Tests the Marathon event channel specific to pod events."""
 
+    await common.assert_event('event_stream_attached', sse_events)
+
     pod_def = pods.simple_pod()
+    pod_id = pod_def['id']
+
+    # In strict mode all tasks are started as user `nobody` by default and `nobody`
+    # doesn't have permissions to write files.
+    if shakedown.ee_version() == 'strict':
+        pod_def['user'] = 'root'
+        common.add_dcos_marathon_user_acls()
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    # look for created
-    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
-    def check_deployment_message():
-        status, stdout = shakedown.run_command_on_master('cat events.txt')
-        assert 'event_stream_attached' in stdout, "event_stream_attached event has not been produced"
-        assert 'pod_created_event' in stdout, "pod_created_event event has not been produced"
-        assert 'deployment_step_success' in stdout, "deployment_step_success event has not beed produced"
-
-    check_deployment_message()
+    await common.assert_event('pod_created_event', sse_events)
+    await common.assert_event('deployment_step_success', sse_events)
 
     pod_def["scaling"]["instances"] = 3
-    client.update_pod(pod_def["id"], pod_def)
-    shakedown.deployment_wait()
+    client.update_pod(pod_id, pod_def)
+    common.deployment_wait(service_id=pod_id)
 
-    # look for updated
-    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
-    def check_update_message():
-        status, stdout = shakedown.run_command_on_master('cat events.txt')
-        assert 'pod_updated_event' in stdout, 'pod_update_event event has not been produced'
-
-    check_update_message()
+    await common.assert_event('pod_updated_event', sse_events)
 
 
 @shakedown.dcos_1_9
@@ -140,17 +137,18 @@ def test_remove_pod():
     """Launches a pod and then removes it."""
 
     pod_def = pods.simple_pod()
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    client.remove_pod(pod_def["id"])
-    shakedown.deployment_wait()
+    client.remove_pod(pod_id)
+    common.deployment_wait(service_id=pod_id)
 
     try:
-        _ = client.show_pod(pod_def["id"])
-    except:
+        client.show_pod(pod_id)
+    except Exception:
         pass
     else:
         assert False, "The pod has not been removed"
@@ -161,61 +159,64 @@ def test_multi_instance_pod():
     """Launches a pod with multiple instances."""
 
     pod_def = pods.simple_pod()
-    pod_def["scaling"]["instances"] = 10
+    pod_id = pod_def['id']
+    pod_def["scaling"]["instances"] = 3
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    status = get_pod_status(pod_def["id"])
-    assert len(status["instances"]) == 10, \
-        "The number of instances is {}, but 10 was expected".format(len(status["instances"]))
+    status = get_pod_status(pod_id)
+    assert len(status["instances"]) == 3, \
+        "The number of instances is {}, but 3 was expected".format(len(status["instances"]))
 
 
 @shakedown.dcos_1_9
 def test_scale_up_pod():
-    """Scales up a pod from 1 to 10 instances."""
+    """Scales up a pod from 1 to 3 instances."""
 
     pod_def = pods.simple_pod()
     pod_def["scaling"]["instances"] = 1
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    status = get_pod_status(pod_def["id"])
+    status = get_pod_status(pod_id)
     assert len(status["instances"]) == 1, \
         "The number of instances is {}, but 1 was expected".format(len(status["instances"]))
 
-    pod_def["scaling"]["instances"] = 10
-    client.update_pod(pod_def["id"], pod_def)
-    shakedown.deployment_wait()
+    pod_def["scaling"]["instances"] = 3
+    client.update_pod(pod_id, pod_def)
+    common.deployment_wait(service_id=pod_id)
 
-    status = get_pod_status(pod_def["id"])
-    assert len(status["instances"]) == 10, \
-        "The number of instances is {}, but 10 was expected".format(len(status["instances"]))
+    status = get_pod_status(pod_id)
+    assert len(status["instances"]) == 3, \
+        "The number of instances is {}, but 3 was expected".format(len(status["instances"]))
 
 
 @shakedown.dcos_1_9
 def test_scale_down_pod():
-    """Scales down a pod from 10 to 1 instance."""
+    """Scales down a pod from 3 to 1 instance."""
 
     pod_def = pods.simple_pod()
-    pod_def["scaling"]["instances"] = 10
+    pod_def["scaling"]["instances"] = 3
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    status = get_pod_status(pod_def["id"])
-    assert len(status["instances"]) == 10, \
-        "The number of instances is {}, but 10 was expected".format(len(status["instances"]))
+    status = get_pod_status(pod_id)
+    assert len(status["instances"]) == 3, \
+        "The number of instances is {}, but 3 was expected".format(len(status["instances"]))
 
     pod_def["scaling"]["instances"] = 1
-    client.update_pod(pod_def["id"], pod_def)
-    shakedown.deployment_wait()
+    client.update_pod(pod_id, pod_def)
+    common.deployment_wait(service_id=pod_id)
 
-    status = get_pod_status(pod_def["id"])
+    status = get_pod_status(pod_id)
     assert len(status["instances"]) == 1, \
         "The number of instances is {}, but 1 was expected".format(len(status["instances"]))
 
@@ -235,20 +236,21 @@ def test_create_and_update_pod():
 
     pod_def = pods.simple_pod()
     pod_def["scaling"]["instances"] = 1
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    pod_def["scaling"]["instances"] = 10
-    client.update_pod(pod_def["id"], pod_def)
-    shakedown.deployment_wait()
+    pod_def["scaling"]["instances"] = 3
+    client.update_pod(pod_id, pod_def)
+    common.deployment_wait(service_id=pod_id)
 
-    versions = get_pod_versions(pod_def["id"])
+    versions = get_pod_versions(pod_id)
     assert len(versions) == 2, "The number of versions is {}, but 2 was expected".format(len(versions))
 
-    version1 = get_pod_version(pod_def["id"], versions[0])
-    version2 = get_pod_version(pod_def["id"], versions[1])
+    version1 = get_pod_version(pod_id, versions[0])
+    version2 = get_pod_version(pod_id, versions[1])
     assert version1["scaling"]["instances"] != version2["scaling"]["instances"], \
         "Two pod versions have the same number of instances: {}, but they should not".format(
             version1["scaling"]["instances"])
@@ -264,17 +266,18 @@ def test_two_pods_with_shared_volume():
     """
 
     pod_def = pods.ephemeral_volume_pod()
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     assert len(tasks) == 2, "The number of tasks is {} after deployment, but 2 was expected".format(len(tasks))
 
     time.sleep(4)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     assert len(tasks) == 2, "The number of tasks is {} after sleeping, but 2 was expected".format(len(tasks))
 
 
@@ -285,19 +288,20 @@ def test_pod_restarts_on_nonzero_exit_code():
     """
 
     pod_def = pods.simple_pod()
+    pod_id = pod_def['id']
     pod_def["scaling"]["instances"] = 1
     pod_def['containers'][0]['exec']['command']['shell'] = 'sleep 5; echo -n leaving; exit 2'
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     initial_id1 = tasks[0]['id']
     initial_id2 = tasks[1]['id']
 
     time.sleep(6)  # 1 sec past the 5 sec sleep in one of the container's command
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     for task in tasks:
         assert task['id'] != initial_id1, "Got the same task ID"
         assert task['id'] != initial_id2, "Got the same task ID"
@@ -308,12 +312,13 @@ def test_pod_multi_port():
     """A pod with two containers is properly provisioned so that each container has a unique port."""
 
     pod_def = pods.ports_pod()
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    pod = client.show_pod(pod_def["id"])
+    pod = client.show_pod(pod_id)
 
     container1 = pod['instances'][0]['containers'][0]
     port1 = container1['endpoints'][0]['allocatedHostPort']
@@ -329,6 +334,7 @@ def test_pod_port_communication():
     """
 
     pod_def = pods.ports_pod()
+    pod_id = pod_def['id']
 
     cmd = 'sleep 2; ' \
           'curl -m 2 localhost:$ENDPOINT_HTTPENDPOINT; ' \
@@ -338,9 +344,9 @@ def test_pod_port_communication():
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     assert len(tasks) == 2, "The number of tasks is {} after deployment, but 2 was expected".format(len(tasks))
 
 
@@ -350,15 +356,16 @@ def test_pin_pod():
     """Tests that a pod can be pinned to a specific host."""
 
     pod_def = pods.ports_pod()
+    pod_id = pod_def['id']
 
     host = common.ip_other_than_mom()
     common.pin_pod_to_host(pod_def, host)
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     assert len(tasks) == 2, "The number of tasks is {} after deployment, but 2 was expected".format(len(tasks))
 
     pod = client.list_pod()[0]
@@ -370,17 +377,16 @@ def test_pod_health_check():
     """Tests that health checks work for pods."""
 
     pod_def = pods.ports_pod()
+    pod_id = pod_def['id']
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
-    c1_health = tasks[0]['statuses'][0]['healthy']
-    c2_health = tasks[1]['statuses'][0]['healthy']
-
-    assert c1_health, "One of the pod's tasks is unhealthy"
-    assert c2_health, "One of the pod's tasks is unhealthy"
+    tasks = common.get_pod_tasks(pod_id)
+    for task in tasks:
+        health = common.running_task_status(task['statuses'])['healthy']
+        assert health, "One of the pod's tasks (%s) is unhealthy" % (task['name'])
 
 
 @shakedown.dcos_1_9
@@ -388,14 +394,21 @@ def test_pod_with_container_network():
     """Tests creation of a pod with a "container" network, and its HTTP endpoint accessibility."""
 
     pod_def = pods.container_net_pod()
+    pod_id = pod_def['id']
+
+    # In strict mode all tasks are started as user `nobody` by default and `nobody`
+    # doesn't have permissions to write to /var/log within the container.
+    if shakedown.ee_version() == 'strict':
+        pod_def['user'] = 'root'
+        common.add_dcos_marathon_user_acls()
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    task = common.task_by_name(common.get_pod_tasks(pod_id), "nginx")
 
-    network_info = tasks[0]['statuses'][0]['container_status']['network_infos'][0]
+    network_info = common.running_status_network_info(task['statuses'])
     assert network_info['name'] == "dcos", \
         "The network name is {}, but 'dcos' was expected".format(network_info['name'])
 
@@ -411,13 +424,20 @@ def test_pod_with_container_bridge_network():
     """Tests creation of a pod with a "container/bridge" network, and its HTTP endpoint accessibility."""
 
     pod_def = pods.container_bridge_pod()
+    pod_id = pod_def['id']
+
+    # In strict mode all tasks are started as user `nobody` by default and `nobody`
+    # doesn't have permissions to write to /var/log within the container.
+    if shakedown.ee_version() == 'strict':
+        pod_def['user'] = 'root'
+        common.add_dcos_marathon_user_acls()
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    task = common.get_pod_tasks(pod_def["id"])[0]
-    network_info = task['statuses'][0]['container_status']['network_infos'][0]
+    task = common.task_by_name(common.get_pod_tasks(pod_id), "nginx")
+    network_info = common.running_status_network_info(task['statuses'])
     assert network_info['name'] == "mesos-bridge", \
         "The network is {}, but mesos-bridge was expected".format(network_info['name'])
 
@@ -444,15 +464,16 @@ def test_pod_health_failed_check():
     """
 
     pod_def = pods.ports_pod()
+    pod_id = pod_def['id']
 
     host = common.ip_other_than_mom()
     common.pin_pod_to_host(pod_def, host)
 
     client = marathon.create_client()
     client.add_pod(pod_def)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     initial_id1 = tasks[0]['id']
     initial_id2 = tasks[1]['id']
 
@@ -464,9 +485,40 @@ def test_pod_health_failed_check():
     common.block_port(host, port)
     time.sleep(7)
     common.restore_iptables(host)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=pod_id)
 
-    tasks = common.get_pod_tasks(pod_def["id"])
+    tasks = common.get_pod_tasks(pod_id)
     for task in tasks:
         assert task['id'] != initial_id1, "One of the tasks has not been restarted"
         assert task['id'] != initial_id2, "One of the tasks has not been restarted"
+
+
+@common.marathon_1_6
+def test_pod_with_persistent_volume():
+    pod_def = pods.persistent_volume_pod()
+    pod_id = pod_def['id']
+
+    client = marathon.create_client()
+    client.add_pod(pod_def)
+    common.deployment_wait(service_id=pod_id)
+
+    tasks = common.get_pod_tasks(pod_id)
+
+    host = common.running_status_network_info(tasks[0]['statuses'])['ip_addresses'][0]['ip_address']
+    port1 = tasks[0]['discovery']['ports']['ports'][0]["number"]
+    port2 = tasks[1]['discovery']['ports']['ports'][0]["number"]
+    dir1 = tasks[0]['container']['volumes'][0]['container_path']
+    dir2 = tasks[1]['container']['volumes'][0]['container_path']
+    print(host, port1, port2, dir1, dir2)
+
+    time.sleep(1)
+
+    cmd = "curl {}:{}/{}/foo".format(host, port1, dir1)
+    run, data = shakedown.run_command_on_master(cmd)
+    assert run, "{} did not succeed".format(cmd)
+    assert data == 'hello\n', "'{}' was not equal to hello\\n".format(data)
+
+    cmd = "curl {}:{}/{}/foo".format(host, port2, dir2)
+    run, data = shakedown.run_command_on_master(cmd)
+    assert run, "{} did not succeed".format(cmd)
+    assert data == 'hello\n', "'{}' was not equal to hello\\n".format(data)

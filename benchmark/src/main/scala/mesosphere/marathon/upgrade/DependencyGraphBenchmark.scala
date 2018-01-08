@@ -53,19 +53,15 @@ object DependencyGraphBenchmark {
       }(breakOut)
 
     val subGroups: Map[GroupKey, Group] = groupIds.map { groupId =>
-      val id = s"supergroup-${superGroupId}/group-${groupId}".toPath
-      id -> Group(
-        id = id,
-        transitiveAppsById = appDefs,
-        transitivePodsById = Map.empty)
+      val id = s"/supergroup-${superGroupId}/group-${groupId}".toPath
+      id -> Group(id = id)
     }(breakOut)
 
     val id = s"/supergroup-${superGroupId}".toPath
     id -> Group(
       id = id,
-      groupsById = subGroups,
-      transitiveAppsById = subGroups.flatMap(_._2.transitiveAppsById)(breakOut),
-      transitivePodsById = Map.empty)
+      groupsById = subGroups
+    )
   }(breakOut)
 
   val rootGroup = RootGroup(
@@ -79,13 +75,8 @@ object DependencyGraphBenchmark {
             id = superGroupId,
             groupsById = superGroup.groupsById.map {
               case (id, subGroup) =>
-                id -> Group(
-                  id = id,
-                  transitiveAppsById = subGroup.transitiveAppsById.mapValues(_.copy(versionInfo = version2)),
-                  transitivePodsById = Map.empty)
-            },
-            transitiveAppsById = superGroup.groupsById.flatMap { case (_, group) => group.transitiveAppsById.mapValues(_.copy(versionInfo = version2)) },
-            transitivePodsById = Map.empty
+                id -> Group(id = id)
+            }
           )
         } else {
           superGroupId -> superGroup

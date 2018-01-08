@@ -65,7 +65,9 @@ class MigrationTo15Test extends AkkaUnitTest with RecoverMethods with GroupCreat
           )
         }
         val expected = basicCommandApp.copy(
-          container = Some(Container.Mesos(Seq(DockerVolume("containerPath", "/host", Mesos.Volume.Mode.RW))))
+          container = Some(Container.Mesos(Seq(VolumeWithMount(
+            volume = HostVolume(None, "/host"),
+            mount = VolumeMount(None, "containerPath")))))
         )
         migrateSingleApp(sd) should be(expected)
       }
@@ -80,10 +82,11 @@ class MigrationTo15Test extends AkkaUnitTest with RecoverMethods with GroupCreat
         title in new Fixture {
           val sd: Protos.ServiceDefinition = f(this)
 
-          recoverToExceptionIf[SerializationFailedException] {
+          recoverToExceptionIf[MigrationCancelledException] {
             migrateSingleAppF(sd)
           }.map { ex =>
-            ex.getMessage should be(MigrationFailedMissingNetworkEnvVar)
+            ex.getCause shouldBe a[SerializationFailedException]
+            ex.getCause.getMessage should be(MigrationFailedMissingNetworkEnvVar)
           }.futureValue
         }
       }
@@ -304,7 +307,7 @@ class MigrationTo15Test extends AkkaUnitTest with RecoverMethods with GroupCreat
       }
       "migrate all apps in the current root group" in new Fixture {
         val singleAppRoot = createRootGroup(
-          apps = Map(basicCommandApp.id -> AppDefinition(id = basicCommandApp.id, versionInfo = basicCommandApp.versionInfo)),
+          apps = Map(basicCommandApp.id -> AppDefinition(id = basicCommandApp.id, versionInfo = basicCommandApp.versionInfo, cmd = Some("sleep"))),
           pods = Map.empty,
           groups = Set.empty,
           dependencies = Set.empty,
@@ -335,7 +338,7 @@ class MigrationTo15Test extends AkkaUnitTest with RecoverMethods with GroupCreat
           version = Timestamp.zero
         )
         val singleAppRoot = createRootGroup(
-          apps = Map(basicCommandApp.id -> AppDefinition(id = basicCommandApp.id, versionInfo = basicCommandApp.versionInfo)),
+          apps = Map(basicCommandApp.id -> AppDefinition(id = basicCommandApp.id, versionInfo = basicCommandApp.versionInfo, cmd = Some("sleep"))),
           pods = Map.empty,
           groups = Set.empty,
           dependencies = Set.empty,

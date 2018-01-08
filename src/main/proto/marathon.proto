@@ -1,6 +1,8 @@
 //
 // protoc --java_out=src/main/java/ --proto_path=/path/to/mesos/include/mesos/ --proto_path=src/main/proto/ src/main/proto/marathon.proto
 //
+syntax = "proto2";
+
 package mesosphere.marathon;
 
 option java_package = "mesosphere.marathon";
@@ -24,6 +26,8 @@ message Constraint {
       UNLIKE = 4;
       // Field will be grouped by field. Value specifies the maximum size of each group.
       MAX_PER = 5;
+      // Field must be the specified value
+      IS = 6;
   }
   required Operator operator = 2;
   optional string value = 3;
@@ -39,6 +43,10 @@ message HealthCheckDefinition {
     MESOS_HTTPS = 5;
     MESOS_TCP = 6;
   }
+  enum IpProtocol {
+    IPv4 = 1;
+    IPv6 = 2;
+  }
   required Protocol protocol = 1;
   optional uint32 portIndex = 2;
   optional uint32 gracePeriodSeconds = 3 [default = 15];
@@ -52,6 +60,7 @@ message HealthCheckDefinition {
   optional uint32 delaySeconds = 11 [default = 15];
   // portName and portIndex are exclusive; both must not be set
   optional string portName = 12;
+  optional IpProtocol ipProtocol = 13 [default = IPv4];;
 }
 
 message ReadinessCheckDefinition {
@@ -123,7 +132,7 @@ message ServiceDefinition {
   optional int64 last_scaling_at = 23;
   optional int64 last_config_change_at = 24;
   optional ObsoleteIpAddress OBSOLETE_ipAddress = 25; // deprecated since 1.5
-  optional ResidencyDefinition residency = 26;
+  optional ResidencyDefinition residency = 26 [deprecated = true];
   repeated mesos.Port portDefinitions = 27;
   repeated ReadinessCheckDefinition readinessCheckDefinition = 28;
   repeated Secret secrets = 29;
@@ -285,6 +294,7 @@ message Volume {
     optional mesos.Resource.DiskInfo.Source.Type type = 2;
     repeated Constraint constraints = 3;
     optional uint64 maxSize = 4;
+    optional string profileName = 5;
   }
 
   // Defining properties of external volumes
@@ -343,7 +353,7 @@ message StorageVersion {
 
 message UpgradeStrategyDefinition {
   required double minimumHealthCapacity = 1;
-  optional double maximumOverCapacity = 2 [default = 1.0];;
+  optional double maximumOverCapacity = 2 [default = 1.0];
 }
 
 message GroupDefinition {

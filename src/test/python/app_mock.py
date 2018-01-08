@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-import sys
 import logging
 import os
 import platform
-import time
+import signal
+import socket
+import sys
 
 # Ensure compatibility with Python 2 and 3.
 # See https://github.com/JioCloud/python-six/blob/master/six.py for details.
@@ -21,7 +22,7 @@ else:
     from urllib.request import Request, urlopen
 
 if PY2:
-    byte_type = unicode
+    byte_type = unicode # NOQA
 
     def response_status(response):
         return response.getcode()
@@ -48,7 +49,6 @@ def make_handler(app_id, version, task_id, base_url):
             msg = "Pong {}".format(app_id)
 
             self.wfile.write(byte_type(msg, "UTF-8"))
-            return
 
         def check_readiness(self):
 
@@ -99,17 +99,15 @@ def make_handler(app_id, version, task_id, base_url):
                     return self.check_readiness()
                 else:
                     return self.check_health()
-            except:
+            except Exception:
                 logging.exception('Could not handle GET request')
-                raise
 
         def do_POST(self):
             try:
                 logging.debug("Got POST request")
                 return self.check_health()
-            except:
+            except Exception:
                 logging.exception('Could not handle POST request')
-                raise
 
     return Handler
 
@@ -127,17 +125,37 @@ if __name__ == "__main__":
     base_url = sys.argv[4]
     task_id = os.getenv("MESOS_TASK_ID", "<UNKNOWN>")
 
-    HTTPServer.allow_reuse_address = True
-    httpd = HTTPServer(("", port), make_handler(app_id, version, task_id, base_url))
+    # Defer binding and activating the server to a later point, allowing to set
+    # allow_reuse_address=True option.
+    httpd = HTTPServer(("", port),
+                       make_handler(app_id, version, task_id, base_url),
+                       bind_and_activate=False)
+    httpd.allow_reuse_address = True
+
     msg = "AppMock[%s %s]: %s has taken the stage at port %d. "\
           "Will query %s for health and readiness status."
     logging.info(msg, app_id, version, task_id, port, base_url)
 
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
+    # Trigger proper shutdown on SIGTERM.
+    def handle_sigterm(signum, frame):
+        logging.warning("Received {} signal. Closing the server...".format(signum))
+        httpd.server_close()
 
-    logging.info("Shutting down.")
-    httpd.shutdown()
-    httpd.socket.close()
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
+    try:
+        httpd.server_bind()
+        httpd.server_activate()
+        httpd.serve_forever()
+    except socket.error as e:
+        # If "[Errno 48] Address already in use" then grep for the process using the port
+        if e.errno == 48:
+            logging.error("Failed to bind to port %d. Trying to grep blocking process:", port)
+            os.system("ps -a | grep $(lsof -ti :{})".format(port))
+        else:
+            logging.exception("Socket.error in the main thread: ")
+    except Exception:
+        logging.exception("Exception in the main thread: ")
+    finally:
+        logging.info("Closing the server...")
+        httpd.server_close()

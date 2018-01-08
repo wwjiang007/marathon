@@ -1,7 +1,7 @@
 package mesosphere.marathon
 package raml
 
-import mesosphere.marathon.api.v2.{ AppNormalization, AppsResource }
+import mesosphere.marathon.api.v2.{ AppNormalization, AppHelpers }
 import mesosphere.marathon.core.health.{ MarathonHttpHealthCheck, PortReference }
 import mesosphere.marathon.core.pod.{ BridgeNetwork, HostNetwork }
 import mesosphere.marathon.state._
@@ -29,7 +29,9 @@ class AppConversionTest extends UnitTest with ValidationTestLike {
       fetch = Seq(FetchUri("http://test.this")),
       backoffStrategy = BackoffStrategy(),
       container = Some(state.Container.Docker(
-        volumes = Seq(state.DockerVolume("/container", "/host", Mesos.Volume.Mode.RW)),
+        volumes = Seq(state.VolumeWithMount(
+          volume = state.HostVolume(None, "/host"),
+          mount = state.VolumeMount(None, "/container"))),
         image = "foo/bla",
         portMappings = Seq(state.Container.PortMapping(12, name = Some("http-api"), hostPort = Some(23), servicePort = 123)),
         privileged = true
@@ -57,12 +59,11 @@ class AppConversionTest extends UnitTest with ValidationTestLike {
       val ramlApp = app.toRaml[App]
 
       When("The app is translated to json and read back from formats")
-      val json = Json.toJson(ramlApp)
       val features = Set(Features.SECRETS)
       val readApp: AppDefinition = withValidationClue {
         Raml.fromRaml(
-          AppsResource.appNormalization(
-            AppsResource.NormalizationConfig(features, AppNormalization.Configuration(None, "bridge-name"))).normalized(ramlApp)
+          AppHelpers.appNormalization(
+            features, AppNormalization.Configuration(None, "bridge-name")).normalized(ramlApp)
         )
       }
       Then("The app is identical")
@@ -111,10 +112,6 @@ class AppConversionTest extends UnitTest with ValidationTestLike {
             )
           )
         )
-        .setResidency(Protos.ResidencyDefinition.newBuilder()
-          .setRelaunchEscalationTimeoutSeconds(33)
-          .setTaskLostBehavior(Protos.ResidencyDefinition.TaskLostBehavior.RELAUNCH_AFTER_TIMEOUT)
-        )
         .setLastScalingAt(0)
         .setLastConfigChangeAt(0)
         .setExecutor("//cmd")
@@ -134,10 +131,6 @@ class AppConversionTest extends UnitTest with ValidationTestLike {
           groups = Set("group1", "group2"),
           labels = Map("try" -> "me"),
           networkName = Option("fubar")
-        )),
-        residency = Option(AppResidency(
-          relaunchEscalationTimeoutSeconds = 33,
-          taskLostBehavior = TaskLostBehavior.RelaunchAfterTimeout
         )),
         versionInfo = Option(VersionInfo(
           lastScalingAt = Timestamp.zero.toOffsetDateTime,

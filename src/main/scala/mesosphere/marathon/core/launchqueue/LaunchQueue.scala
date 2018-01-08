@@ -21,27 +21,27 @@ object LaunchQueue {
     * @param backOffUntil timestamp until which no further launch attempts will be made
     */
   case class QueuedInstanceInfo(
-    runSpec: RunSpec,
-    inProgress: Boolean,
-    instancesLeftToLaunch: Int,
-    finalInstanceCount: Int,
-    backOffUntil: Timestamp,
-    startedAt: Timestamp)
+      runSpec: RunSpec,
+      inProgress: Boolean,
+      instancesLeftToLaunch: Int,
+      finalInstanceCount: Int,
+      backOffUntil: Timestamp,
+      startedAt: Timestamp)
 
   case class QueuedInstanceInfoWithStatistics(
-    runSpec: RunSpec,
-    inProgress: Boolean,
-    instancesLeftToLaunch: Int,
-    finalInstanceCount: Int,
-    backOffUntil: Timestamp,
-    startedAt: Timestamp,
-    rejectSummaryLastOffers: Map[NoOfferMatchReason, Int],
-    rejectSummaryLaunchAttempt: Map[NoOfferMatchReason, Int],
-    processedOffersCount: Int,
-    unusedOffersCount: Int,
-    lastMatch: Option[OfferMatchResult.Match],
-    lastNoMatch: Option[OfferMatchResult.NoMatch],
-    lastNoMatches: Seq[OfferMatchResult.NoMatch]
+      runSpec: RunSpec,
+      inProgress: Boolean,
+      instancesLeftToLaunch: Int,
+      finalInstanceCount: Int,
+      backOffUntil: Timestamp,
+      startedAt: Timestamp,
+      rejectSummaryLastOffers: Map[NoOfferMatchReason, Int],
+      rejectSummaryLaunchAttempt: Map[NoOfferMatchReason, Int],
+      processedOffersCount: Int,
+      unusedOffersCount: Int,
+      lastMatch: Option[OfferMatchResult.Match],
+      lastNoMatch: Option[OfferMatchResult.NoMatch],
+      lastNoMatches: Seq[OfferMatchResult.NoMatch]
   )
 }
 
@@ -90,6 +90,9 @@ trait LaunchQueue {
 
   /** Reset the backoff delay for the given RunnableSpec. */
   def resetDelay(spec: RunSpec): Unit
+
+  /** Advance the reference time point of the delay for the given RunSpec */
+  def advanceDelay(spec: RunSpec): Unit
 
   /** Notify queue about InstanceUpdate */
   def notifyOfInstanceUpdate(update: InstanceChange): Future[Done]

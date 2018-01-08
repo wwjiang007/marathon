@@ -66,11 +66,6 @@ executed by Mesos on the agent running the corresponding task and thus test reac
 You must escape any double quotes in your commands. This is required because Mesos runs the healthcheck command inside via `/bin/sh -c ""`.
   See the example below and [MESOS-4812](https://issues.apache.org/jira/browse/MESOS-4812) for details.
 
-*Note:* Command health checks in combination with Dockerized tasks were
-  broken in Mesos v0.23.0 and v0.24.0. This issue has been fixed in
-  v0.23.1 and v0.24.1. See [MESOS-3136](https://issues.apache.org/jira/browse/MESOS-3136) for
-  more details.
-
 ## Health Lifecycle
 
 The application health lifecycle is represented by the finite state machine in
@@ -101,7 +96,10 @@ Options applicable to every protocol:
 * `maxConsecutiveFailures`(Optional. Default: 3): Number of consecutive health
   check failures after which the unhealthy task should be killed.
   HTTP & TCP health checks: If this value is `0`, tasks will not be killed if
-  they fail the health check.
+  they fail the health check. Note that this semantic is different for mesos health checks e.g.
+  `MESOS_HTTP`. Here the task will be killed by mesos after failing `>= maxConsecutiveFailures`
+  times. This means that setting `maxConsecutiveFailures = 0` will lead to task being killed immediately after
+  first health check fails.
 * `timeoutSeconds` (Optional. Default: 20): Number of seconds after which a
   health check is considered a failure regardless of the response.
 

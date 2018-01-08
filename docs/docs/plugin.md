@@ -106,6 +106,7 @@ Marathon will load this descriptor with all defined plugins during startup.
 
 - `plugin` (required): the name of the plugin interface.
 - `implementation` (required): the name of the implementing class.
+- `enabled` (optional): disable or enable plugin. By default plugin is enabled.
 - `configuration` (optional): configuration that is available to the plugin via the PluginConfiguration trait.
 - `tags` (optional): meta data attached to this plugin as simple strings.
 - `info` (optional): meta data attached to this plugin as key/value pair.
@@ -126,6 +127,7 @@ Example:
     "authenticator": {
       "plugin": "mesosphere.marathon.plugin.auth.Authenticator",
       "implementation": "my.company.ExampleAuthenticator",
+      "enabled": false,
       "configuration": {
         "users": [
           {
@@ -189,6 +191,16 @@ This plugin allow for the validation of an app or pod at the time the runspec is
 Please see the [RunSpecValidator](https://github.com/mesosphere/marathon/blob/master/plugin-interface/src/main/scala/mesosphere/marathon/plugin/validation/RunSpecValidator.scala) trait for documentation as well as [Example Scala Plugin](https://github.com/mesosphere/marathon-example-plugins/tree/master/label).
 
 Marathon and the `RunSpecValidator` use the [Accord](https://github.com/wix/accord) validation library which is useful to understand when creating validator rules.
+
+## Scheduler
+
+#### mesosphere.marathon.plugin.scheduler.SchedulerPlugin
+
+This plugin allows to reject offers. Possible use-cases are:
+* Maintenance. Mark agent as going to maintenance and reject new offers from it.
+* Analytics. If task fails, for example, 5 times for 5 minutes, we can assume that it will fail again and reject new offers for it.
+* Binding to agents. For example, agents can be marked as included into primary or secondary group. Task can be marked with group name.
+ Plugin can schedule task deployment to primary agents. If all primary agents are busy, task can be scheduled to secondary agents
 
 ## Notes on Plugins
 

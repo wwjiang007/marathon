@@ -7,12 +7,12 @@ import akka.actor.{ Actor, Cancellable, Props }
 import akka.event.LoggingReceive
 import akka.pattern.pipe
 import com.typesafe.scalalogging.StrictLogging
+import mesosphere.marathon.core.instance.LocalVolumeId
 import mesosphere.marathon.core.matcher.base.OfferMatcher
 import mesosphere.marathon.core.matcher.base.OfferMatcher.{ InstanceOpWithSource, MatchedInstanceOps }
 import mesosphere.marathon.core.matcher.base.util.ActorOfferMatcher
 import mesosphere.marathon.core.matcher.manager.OfferMatcherManagerConfig
 import mesosphere.marathon.core.matcher.manager.impl.OfferMatcherManagerActor.{ CleanUpOverdueOffers, MatchOfferData, UnprocessedOffer }
-import mesosphere.marathon.core.task.Task.LocalVolumeId
 import mesosphere.marathon.metrics.{ Metrics, ServiceMetric, SettableGauge }
 import mesosphere.marathon.state.{ PathId, Timestamp }
 import mesosphere.marathon.stream.Implicits._
@@ -96,9 +96,9 @@ private[manager] object OfferMatcherManagerActor {
 }
 
 private[impl] class OfferMatcherManagerActor private (
-  metrics: OfferMatcherManagerActorMetrics,
-  random: Random, clock: Clock, conf: OfferMatcherManagerConfig, offersWantedObserver: Observer[Boolean])
-    extends Actor with StrictLogging {
+    metrics: OfferMatcherManagerActorMetrics,
+    random: Random, clock: Clock, conf: OfferMatcherManagerConfig, offersWantedObserver: Observer[Boolean])
+  extends Actor with StrictLogging {
 
   var launchTokens: Int = 0
 
@@ -167,20 +167,21 @@ private[impl] class OfferMatcherManagerActor private (
   def updateOffersWanted(): Unit = offersWantedObserver.onNext(offersWanted)
 
   def offerMatchers(offer: Offer): Queue[OfferMatcher] = {
-    //the persistence id of a volume encodes the app id
-    //we use this information as filter criteria
-    val appReservations: Set[PathId] = offer.getResourcesList.view
+    // the persistence id of a volume encodes the app id
+    // we use this information as filter criteria
+    val reservations: Set[PathId] = offer.getResourcesList.view
       .filter(r => r.hasDisk && r.getDisk.hasPersistence && r.getDisk.getPersistence.hasId)
       .map(_.getDisk.getPersistence.getId)
       .collect { case LocalVolumeId(volumeId) => volumeId.runSpecId }
       .toSet
-    val (reserved, normal) = matchers.toSeq.partition(_.precedenceFor.exists(appReservations))
-    //1 give the offer to the matcher waiting for a reservation
-    //2 give the offer to anybody else
-    //3 randomize both lists to be fair
+    val (reserved, normal) = matchers.toSeq.partition(_.precedenceFor.exists(reservations))
+    // 1. give the offer to the matcher waiting for a reservation
+    // 2. give the offer to anybody else
+    // 3. randomize both lists to be fair
     (random.shuffle(reserved) ++ random.shuffle(normal)).to[Queue]
   }
 
+  @SuppressWarnings(Array("ListSize"))
   def receiveProcessOffer: Receive = {
     case ActorOfferMatcher.MatchOffer(offer: Offer, promise: Promise[OfferMatcher.MatchedInstanceOps]) if !offersWanted =>
       completeWithNoMatch("No offers wanted", offer, promise, resendThisOffer = matchers.nonEmpty)
@@ -249,6 +250,7 @@ private[impl] class OfferMatcherManagerActor private (
   /**
     * Filter all unprocessed offers that are overdue and decline.
     */
+  @SuppressWarnings(Array("ListSize"))
   def rejectElapsedOffers(): Unit = {
     // unprocessed offers are stacked in order with the newest element first: so we can use span here.
     val (valid, overdue) = unprocessedOffers.span(_.notOverdue(clock))
@@ -267,6 +269,7 @@ private[impl] class OfferMatcherManagerActor private (
   /**
     * If there are unprocessed offers, take the next one and start the process.
     */
+  @SuppressWarnings(Array("ListSize"))
   def startNextUnprocessedOffer(): Unit = {
     unprocessedOffers match {
       case head :: _ if head.isOverdue(clock) =>

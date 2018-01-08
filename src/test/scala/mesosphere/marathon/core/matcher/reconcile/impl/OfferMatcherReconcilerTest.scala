@@ -2,11 +2,10 @@ package mesosphere.marathon
 package core.matcher.reconcile.impl
 
 import mesosphere.UnitTest
-import mesosphere.marathon.core.instance.TestInstanceBuilder
+import mesosphere.marathon.core.instance.{ LocalVolumeId, TestInstanceBuilder }
 import mesosphere.marathon.core.instance.update.InstanceUpdateOperation
 import mesosphere.marathon.core.launcher.InstanceOp
 import mesosphere.marathon.core.task.Task
-import mesosphere.marathon.core.task.Task.LocalVolumeId
 import mesosphere.marathon.core.task.tracker.InstanceTracker
 import mesosphere.marathon.core.task.tracker.InstanceTracker.InstancesBySpec
 import mesosphere.marathon.state._
@@ -67,7 +66,7 @@ class OfferMatcherReconcilerTest extends UnitTest with GroupCreation {
       val offer = MarathonTestHelper.offerWithVolumes(taskId, localVolumeIdLaunched)
 
       And("a bogus app")
-      val app = AppDefinition(appId)
+      val app = AppDefinition(appId, cmd = Some("sleep"))
       f.groupRepository.root() returns Future.successful(createRootGroup(apps = Map(app.id -> app)))
       And("no tasks")
       f.taskTracker.instancesBySpec()(any) returns Future.successful(InstancesBySpec.empty)
@@ -125,7 +124,7 @@ class OfferMatcherReconcilerTest extends UnitTest with GroupCreation {
       val offer = MarathonTestHelper.offerWithVolumes(taskId, localVolumeIdLaunched)
 
       And("a matching bogus app")
-      val app = AppDefinition(appId)
+      val app = AppDefinition(appId, cmd = Some("sleep"))
       f.groupRepository.root() returns Future.successful(createRootGroup(apps = Map(app.id -> app)))
       And("a matching bogus task")
       f.taskTracker.instancesBySpec()(any) returns Future.successful(

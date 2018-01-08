@@ -147,9 +147,9 @@ class AppInfoBaseDataTest extends UnitTest with GroupCreation {
 
       appInfo should be(AppInfo(app, maybeTasks = Some(
         Seq(
-          EnrichedTask(app.id, running1.appTask, running1.agentInfo, Seq.empty),
-          EnrichedTask(app.id, running2.appTask, running2.agentInfo, Seq(alive)),
-          EnrichedTask(app.id, running3.appTask, running3.agentInfo, Seq(unhealthy))
+          EnrichedTask(running1, running1.appTask, Nil),
+          EnrichedTask(running2, running2.appTask, Seq(alive)),
+          EnrichedTask(running3, running3.appTask, Seq(unhealthy))
         )
       )))
 
@@ -400,7 +400,7 @@ class AppInfoBaseDataTest extends UnitTest with GroupCreation {
       val instanceId = Instance.Id.forRunSpec(pod.id)
       val tasks: Map[Task.Id, Task] = pod.containers.map { ct =>
         val taskId = Task.Id.forInstanceId(instanceId, Some(ct))
-        taskId -> Task.LaunchedEphemeral(
+        taskId -> Task(
           taskId = taskId,
           runSpecVersion = pod.version,
           status = Task.Status.apply(
@@ -413,29 +413,30 @@ class AppInfoBaseDataTest extends UnitTest with GroupCreation {
 
       Instance(
         instanceId = instanceId,
-        agentInfo = Instance.AgentInfo("", None, Nil),
+        agentInfo = Instance.AgentInfo("", None, None, None, Nil),
         state = InstanceState(None, tasks, f.clock.now(), UnreachableStrategy.default()),
         tasksMap = tasks,
         runSpecVersion = pod.version,
-        unreachableStrategy = UnreachableStrategy.default()
+        unreachableStrategy = UnreachableStrategy.default(),
+        None
       )
     }
 
     "pod statuses xref the correct spec versions" in {
       implicit val f = new Fixture
-      val v1 = f.clock.now()
-      val podspec1 = pod.copy(version = v1)
+      val v1 = VersionInfo.OnlyVersion(f.clock.now())
+      val podspec1 = pod.copy(versionInfo = v1)
 
       f.clock += 1.minute
 
       // the same as podspec1 but with a new version and a renamed container
-      val v2 = f.clock.now()
-      val podspec2 = pod.copy(version = v2, containers = pod.containers.map(_.copy(name = "ct2")))
+      val v2 = VersionInfo.OnlyVersion(f.clock.now())
+      val podspec2 = pod.copy(versionInfo = v2, containers = pod.containers.map(_.copy(name = "ct2")))
 
       Given("multiple versions of the same pod specification")
       def findPodSpecByVersion(version: Timestamp): Option[PodDefinition] = {
-        if (v1 == version) Some(podspec1)
-        else if (v2 == version) Some(podspec2)
+        if (v1.version == version) Some(podspec1)
+        else if (v2.version == version) Some(podspec2)
         else Option.empty[PodDefinition]
       }
 
@@ -463,8 +464,8 @@ class AppInfoBaseDataTest extends UnitTest with GroupCreation {
       }
 
       And("instance referring to a bogus version doesn't have any status")
-      val v3 = f.clock.now()
-      val instanceV3 = fakeInstance(pod.copy(version = v3))
+      val v3 = VersionInfo.OnlyVersion(f.clock.now())
+      val instanceV3 = fakeInstance(pod.copy(versionInfo = v3))
       val maybeStatus3 = f.baseData.podInstanceStatus(instanceV3)(findPodSpecByVersion)
 
       maybeStatus3 should be ('empty)

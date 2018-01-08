@@ -8,7 +8,7 @@ import com.typesafe.scalalogging.StrictLogging
 import mesosphere.marathon.core.deployment._
 import mesosphere.marathon.core.deployment.impl.DeploymentActor.{ Cancel, Fail, NextStep }
 import mesosphere.marathon.core.deployment.impl.DeploymentManagerActor.DeploymentFinished
-import mesosphere.marathon.core.event.{ DeploymentStatus, DeploymentStepFailure, DeploymentStepSuccess }
+import mesosphere.marathon.core.event.{ AppTerminatedEvent, DeploymentStatus, DeploymentStepFailure, DeploymentStepSuccess }
 import mesosphere.marathon.core.health.HealthCheckManager
 import mesosphere.marathon.core.instance.Instance
 import mesosphere.marathon.core.launchqueue.LaunchQueue
@@ -25,7 +25,7 @@ import scala.util.control.NonFatal
 import scala.util.{ Failure, Success }
 
 private class DeploymentActor(
-    deploymentManager: ActorRef,
+    deploymentManagerActor: ActorRef,
     promise: Promise[Done],
     killService: KillService,
     scheduler: SchedulerActions,
@@ -72,7 +72,7 @@ private class DeploymentActor(
   }
 
   override def postStop(): Unit = {
-    deploymentManager ! DeploymentFinished(plan)
+    deploymentManagerActor ! DeploymentFinished(plan)
   }
 
   def receive: Receive = {
@@ -80,7 +80,7 @@ private class DeploymentActor(
       val step = steps.next()
       currentStepNr += 1
       logger.debug(s"Process next deployment step: stepNumber=$currentStepNr step=$step planId=${plan.id}")
-      deploymentManager ! DeploymentStepInfo(plan, step, currentStepNr)
+      deploymentManagerActor ! DeploymentStepInfo(plan, step, currentStepNr)
 
       performStep(step) onComplete {
         case Success(_) => self ! NextStep
@@ -141,7 +141,7 @@ private class DeploymentActor(
   def startRunnable(runnableSpec: RunSpec, scaleTo: Int, status: DeploymentStatus): Future[Unit] = {
     val promise = Promise[Unit]()
     instanceTracker.specInstances(runnableSpec.id).map { instances =>
-      context.actorOf(childSupervisor(AppStartActor.props(deploymentManager, status, scheduler, launchQueue, instanceTracker,
+      context.actorOf(childSupervisor(AppStartActor.props(deploymentManagerActor, status, scheduler, launchQueue, instanceTracker,
         eventBus, readinessCheckExecutor, runnableSpec, scaleTo, instances, promise), s"AppStart-${plan.id}"))
     }
     promise.future
@@ -176,7 +176,7 @@ private class DeploymentActor(
         tasksToStart.fold(Future.successful(Done)) { tasksToStart =>
           logger.debug(s"Start next $tasksToStart tasks")
           val promise = Promise[Unit]()
-          context.actorOf(childSupervisor(TaskStartActor.props(deploymentManager, status, scheduler, launchQueue, instanceTracker, eventBus,
+          context.actorOf(childSupervisor(TaskStartActor.props(deploymentManagerActor, status, scheduler, launchQueue, instanceTracker, eventBus,
             readinessCheckExecutor, runnableSpec, scaleTo, promise), s"TaskStart-${plan.id}"))
           promise.future.map(_ => Done)
         }
@@ -186,20 +186,30 @@ private class DeploymentActor(
   }
 
   @SuppressWarnings(Array("all")) /* async/await */
-  def stopRunnable(runnableSpec: RunSpec): Future[Done] = async {
-    logger.debug(s"Stop runnable $runnableSpec")
-    val instances = await(instanceTracker.specInstances(runnableSpec.id))
+  def stopRunnable(runSpec: RunSpec): Future[Done] = async {
+    logger.debug(s"Stop runnable $runSpec")
+    healthCheckManager.removeAllFor(runSpec.id)
+
+    // Purging launch queue
+    await(launchQueue.asyncPurge(runSpec.id))
+
+    val instances = await(instanceTracker.specInstances(runSpec.id))
     val launchedInstances = instances.filter(_.isLaunched)
-    // TODO: the launch queue is purged in stopRunnable, but it would make sense to do that before calling kill(tasks)
+
+    logger.info(s"Killing all instances of ${runSpec.id}: ${launchedInstances.map(_.instanceId)}")
     await(killService.killInstances(launchedInstances, KillReason.DeletingApp))
 
-    logger.debug(s"Killed all remaining tasks: ${launchedInstances.map(_.instanceId)}")
+    launchQueue.resetDelay(runSpec)
 
-    // Note: This is an asynchronous call. We do NOT wait for the run spec to stop. If we do, the DeploymentActorTest
-    // fails.
-    scheduler.stopRunSpec(runnableSpec)
+    // The tasks will be removed from the InstanceTracker when their termination
+    // was confirmed by Mesos via a task update.
+    eventBus.publish(AppTerminatedEvent(runSpec.id))
 
     Done
+  }.recover {
+    case NonFatal(error) =>
+      logger.warn(s"Error in stopping runSpec ${runSpec.id}", error);
+      Done
   }
 
   def restartRunnable(run: RunSpec, status: DeploymentStatus): Future[Done] = {
@@ -207,7 +217,7 @@ private class DeploymentActor(
       Future.successful(Done)
     } else {
       val promise = Promise[Unit]()
-      context.actorOf(childSupervisor(TaskReplaceActor.props(deploymentManager, status, killService,
+      context.actorOf(childSupervisor(TaskReplaceActor.props(deploymentManagerActor, status, killService,
         launchQueue, instanceTracker, eventBus, readinessCheckExecutor, run, promise), s"TaskReplace-${plan.id}"))
       promise.future.map(_ => Done)
     }
@@ -223,7 +233,7 @@ object DeploymentActor {
 
   @SuppressWarnings(Array("MaxParameters"))
   def props(
-    deploymentManager: ActorRef,
+    deploymentManagerActor: ActorRef,
     promise: Promise[Done],
     killService: KillService,
     scheduler: SchedulerActions,
@@ -235,7 +245,7 @@ object DeploymentActor {
     readinessCheckExecutor: ReadinessCheckExecutor): Props = {
 
     Props(new DeploymentActor(
-      deploymentManager,
+      deploymentManagerActor,
       promise,
       killService,
       scheduler,

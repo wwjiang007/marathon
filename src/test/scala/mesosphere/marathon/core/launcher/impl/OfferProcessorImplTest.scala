@@ -1,19 +1,18 @@
 package mesosphere.marathon
 package core.launcher.impl
 
-import akka.Done
 import mesosphere.UnitTest
 import mesosphere.marathon.test.SettableClock
 import mesosphere.marathon.core.condition.Condition
 import mesosphere.marathon.core.instance.TestInstanceBuilder._
-import mesosphere.marathon.core.instance.update.InstanceUpdateOperation
+import mesosphere.marathon.core.instance.update.{ InstanceUpdateEffect, InstanceUpdateOperation }
 import mesosphere.marathon.core.instance.{ Instance, TestInstanceBuilder }
 import mesosphere.marathon.core.launcher.{ InstanceOp, OfferProcessorConfig, TaskLauncher }
 import mesosphere.marathon.core.matcher.base.OfferMatcher
 import mesosphere.marathon.core.matcher.base.OfferMatcher.{ InstanceOpSource, InstanceOpWithSource, MatchedInstanceOps }
 import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.core.task.state.{ AgentInfoPlaceholder, NetworkInfoPlaceholder }
-import mesosphere.marathon.core.task.tracker.InstanceCreationHandler
+import mesosphere.marathon.core.task.tracker.InstanceStateOpProcessor
 import mesosphere.marathon.state.PathId
 import mesosphere.marathon.test.MarathonTestHelper
 import mesosphere.marathon.util.NoopSourceQueue
@@ -33,27 +32,30 @@ class OfferProcessorImplTest extends UnitTest {
   private[this] val taskInfo2 = MarathonTestHelper.makeOneCPUTask(Task.Id.forInstanceId(instanceId2, None)).build()
   private[this] val instance1 = TestInstanceBuilder.newBuilderWithInstanceId(instanceId1).addTaskWithBuilder().taskFromTaskInfo(taskInfo1).build().getInstance()
   private[this] val instance2 = TestInstanceBuilder.newBuilderWithInstanceId(instanceId2).addTaskWithBuilder().taskFromTaskInfo(taskInfo2).build().getInstance()
-  private[this] val task1: Task.LaunchedEphemeral = instance1.appTask
-  private[this] val task2: Task.LaunchedEphemeral = instance2.appTask
+  private[this] val task1: Task = instance1.appTask
+  private[this] val task2: Task = instance2.appTask
 
   private[this] val tasks = Seq((taskInfo1, task1, instance1), (taskInfo2, task2, instance2))
+  private[this] val arbitraryInstanceUpdateEffect = InstanceUpdateEffect.Noop(instanceId1)
 
   case class Fixture(
       conf: OfferProcessorConfig = new OfferProcessorConfig { verify() },
       clock: SettableClock = new SettableClock(),
       offerMatcher: OfferMatcher = mock[OfferMatcher],
       taskLauncher: TaskLauncher = mock[TaskLauncher],
-      taskCreationHandler: InstanceCreationHandler = mock[InstanceCreationHandler]) {
+      stateOpProcessor: InstanceStateOpProcessor = mock[InstanceStateOpProcessor]) {
     val offerProcessor = new OfferProcessorImpl(
-      conf, clock, offerMatcher, taskLauncher, taskCreationHandler,
+      conf, offerMatcher, taskLauncher, stateOpProcessor,
       NoopSourceQueue()
     )
   }
 
   object f {
     import org.apache.mesos.{ Protos => Mesos }
-    val launch = new InstanceOpFactoryHelper(Some("principal"), Some("role")).launchEphemeral(_: Mesos.TaskInfo, _: Task.LaunchedEphemeral, _: Instance)
-    val launchWithNewTask = new InstanceOpFactoryHelper(Some("principal"), Some("role")).launchOnReservation _
+    val launch = new InstanceOpFactoryHelper(Some("principal"), Some("role"))
+      .launchEphemeral(_: Mesos.TaskInfo, _: Task, _: Instance)
+    val launchWithNewTask = new InstanceOpFactoryHelper(Some("principal"), Some("role"))
+      .launchOnReservation(_: Mesos.TaskInfo, _: InstanceUpdateOperation.LaunchOnReservation, _: Instance)
   }
 
   class DummySource extends InstanceOpSource {
@@ -74,7 +76,7 @@ class OfferProcessorImplTest extends UnitTest {
       offerMatcher.matchOffer(offer) returns Future.successful(MatchedInstanceOps(offerId, tasksWithSource))
       for (task <- tasks) {
         val stateOp = InstanceUpdateOperation.LaunchEphemeral(task._3)
-        taskCreationHandler.created(stateOp) returns Future.successful(Done)
+        stateOpProcessor.process(stateOp) returns Future.successful(arbitraryInstanceUpdateEffect)
       }
 
       And("a working taskLauncher")
@@ -94,8 +96,8 @@ class OfferProcessorImplTest extends UnitTest {
 
       And("the tasks have been stored")
       for (task <- tasksWithSource) {
-        val ordered = inOrder(taskCreationHandler)
-        ordered.verify(taskCreationHandler).created(task.op.stateOp)
+        val ordered = inOrder(stateOpProcessor)
+        ordered.verify(stateOpProcessor).process(task.op.stateOp)
       }
     }
 
@@ -108,8 +110,8 @@ class OfferProcessorImplTest extends UnitTest {
       offerMatcher.matchOffer(offer) returns Future.successful(MatchedInstanceOps(offerId, tasksWithSource))
       for (task <- tasksWithSource) {
         val op = task.op
-        taskCreationHandler.created(op.stateOp) returns Future.successful(Done)
-        taskCreationHandler.terminated(InstanceUpdateOperation.ForceExpunge(op.stateOp.instanceId)) returns Future.successful(Done)
+        stateOpProcessor.process(op.stateOp) returns Future.successful(arbitraryInstanceUpdateEffect)
+        stateOpProcessor.process(InstanceUpdateOperation.ForceExpunge(op.stateOp.instanceId)) returns Future.successful(arbitraryInstanceUpdateEffect)
       }
 
       And("a dysfunctional taskLauncher")
@@ -128,10 +130,10 @@ class OfferProcessorImplTest extends UnitTest {
 
       And("the tasks where first stored and then expunged again")
       for (task <- tasksWithSource) {
-        val ordered = inOrder(taskCreationHandler)
+        val ordered = inOrder(stateOpProcessor)
         val op = task.op
-        ordered.verify(taskCreationHandler).created(op.stateOp)
-        ordered.verify(taskCreationHandler).terminated(InstanceUpdateOperation.ForceExpunge(op.stateOp.instanceId))
+        ordered.verify(stateOpProcessor).process(op.stateOp)
+        ordered.verify(stateOpProcessor).process(InstanceUpdateOperation.ForceExpunge(op.stateOp.instanceId))
       }
     }
 
@@ -140,14 +142,17 @@ class OfferProcessorImplTest extends UnitTest {
       val dummySource = new DummySource
       val tasksWithSource = tasks.map {
         case (taskInfo, _, _) =>
-          val dummyInstance = TestInstanceBuilder.newBuilder(appId).addTaskResidentReserved().getInstance()
+          val dummyInstance = TestInstanceBuilder.newBuilder(appId).addTaskResidentReserved(Seq.empty).getInstance()
+          val taskId = Task.Id(taskInfo.getTaskId)
+          val newTaskId = Task.Id.forResidentTask(taskId)
           val updateOperation = InstanceUpdateOperation.LaunchOnReservation(
             instanceId = dummyInstance.instanceId,
-            newTaskId = Task.Id.forResidentTask(Task.Id(taskInfo.getTaskId)),
+            oldToNewTaskIds = Map(taskId -> newTaskId),
             runSpecVersion = clock.now(),
             timestamp = clock.now(),
-            status = Task.Status(clock.now(), condition = Condition.Running, networkInfo = NetworkInfoPlaceholder()),
-            hostPorts = Seq.empty,
+            statuses = Map(taskId -> Task.Status(
+              clock.now(), condition = Condition.Running, networkInfo = NetworkInfoPlaceholder())),
+            hostPorts = Map.empty,
             agentInfo = AgentInfoPlaceholder())
           val launch = f.launchWithNewTask(
             taskInfo,
@@ -161,8 +166,8 @@ class OfferProcessorImplTest extends UnitTest {
       offerMatcher.matchOffer(offer) returns Future.successful(MatchedInstanceOps(offerId, tasksWithSource))
       for (task <- tasksWithSource) {
         val op = task.op
-        taskCreationHandler.created(op.stateOp) returns Future.successful(Done)
-        taskCreationHandler.created(InstanceUpdateOperation.Revert(op.oldInstance.get)) returns Future.successful(Done)
+        stateOpProcessor.process(op.stateOp) returns Future.successful(arbitraryInstanceUpdateEffect)
+        stateOpProcessor.process(InstanceUpdateOperation.Revert(op.oldInstance.get)) returns Future.successful(arbitraryInstanceUpdateEffect)
       }
 
       And("a dysfunctional taskLauncher")
@@ -182,9 +187,9 @@ class OfferProcessorImplTest extends UnitTest {
       And("the tasks where first stored and then expunged again")
       for (task <- tasksWithSource) {
         val op = task.op
-        val ordered = inOrder(taskCreationHandler)
-        ordered.verify(taskCreationHandler).created(op.stateOp)
-        ordered.verify(taskCreationHandler).created(InstanceUpdateOperation.Revert(op.oldInstance.get))
+        val ordered = inOrder(stateOpProcessor)
+        ordered.verify(stateOpProcessor).process(op.stateOp)
+        ordered.verify(stateOpProcessor).process(InstanceUpdateOperation.Revert(op.oldInstance.get))
       }
     }
 

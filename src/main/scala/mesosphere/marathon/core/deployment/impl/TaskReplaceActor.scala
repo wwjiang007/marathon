@@ -21,7 +21,7 @@ import scala.collection.{ SortedSet, mutable }
 import scala.concurrent.{ Future, Promise }
 
 class TaskReplaceActor(
-    val deploymentManager: ActorRef,
+    val deploymentManagerActor: ActorRef,
     val status: DeploymentStatus,
     val killService: KillService,
     val launchQueue: LaunchQueue,
@@ -176,7 +176,7 @@ object TaskReplaceActor extends StrictLogging {
 
   //scalastyle:off
   def props(
-    deploymentManager: ActorRef,
+    deploymentManagerActor: ActorRef,
     status: DeploymentStatus,
     killService: KillService,
     launchQueue: LaunchQueue,
@@ -185,7 +185,7 @@ object TaskReplaceActor extends StrictLogging {
     readinessCheckExecutor: ReadinessCheckExecutor,
     app: RunSpec,
     promise: Promise[Unit]): Props = Props(
-    new TaskReplaceActor(deploymentManager, status, killService, launchQueue, instanceTracker, eventBus,
+    new TaskReplaceActor(deploymentManagerActor, status, killService, launchQueue, instanceTracker, eventBus,
       readinessCheckExecutor, app, promise)
   )
 
@@ -202,7 +202,7 @@ object TaskReplaceActor extends StrictLogging {
     var nrToKillImmediately = math.max(0, runningInstancesCount - minHealthy)
 
     if (minHealthy == maxCapacity && maxCapacity <= runningInstancesCount) {
-      if (runSpec.residency.isDefined) {
+      if (runSpec.isResident) {
         // Kill enough instances so that we end up with one instance below minHealthy.
         // TODO: We need to do this also while restarting, since the kill could get lost.
         nrToKillImmediately = runningInstancesCount - minHealthy + 1

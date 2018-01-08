@@ -41,13 +41,16 @@ class InstanceUpdateOpResolverTest extends UnitTest with Inside {
 
     "LaunchOnReservation for an unknown task" in new Fixture {
       instanceTracker.instance(notExistingInstanceId) returns Future.successful(None)
+      val taskId = Task.Id.forRunSpec(notExistingInstanceId.runSpecId)
+      val newTaskId = Task.Id.forResidentTask(taskId)
       val stateChange = updateOpResolver.resolve(InstanceUpdateOperation.LaunchOnReservation(
         instanceId = notExistingInstanceId,
-        newTaskId = Task.Id.forResidentTask(Task.Id.forRunSpec(notExistingInstanceId.runSpecId)),
+        oldToNewTaskIds = Map(taskId -> newTaskId),
         runSpecVersion = Timestamp(0),
         timestamp = Timestamp(0),
-        status = Task.Status(Timestamp(0), condition = Condition.Running, networkInfo = NetworkInfoPlaceholder()),
-        hostPorts = Seq.empty,
+        statuses = Map(taskId -> Task.Status(
+          Timestamp(0), condition = Condition.Running, networkInfo = NetworkInfoPlaceholder())),
+        hostPorts = Map.empty,
         agentInfo = AgentInfoPlaceholder())).futureValue
 
       When("call taskTracker.task")
@@ -394,12 +397,13 @@ class InstanceUpdateOpResolverTest extends UnitTest with Inside {
 
     lazy val appId = PathId("/app")
     lazy val existingInstance: Instance = TestInstanceBuilder.newBuilder(appId).addTaskRunning().getInstance()
-    lazy val existingTask: Task.LaunchedEphemeral = existingInstance.appTask
+    lazy val existingTask: Task = existingInstance.appTask
 
     lazy val reservedInstance = TestInstanceBuilder.newBuilder(appId).addTaskReserved().getInstance()
-    lazy val existingReservedTask: Task.Reserved = reservedInstance.appTask
+    lazy val existingReservedTask: Task = reservedInstance.appTask
 
-    lazy val reservedLaunchedInstance: Instance = TestInstanceBuilder.newBuilder(appId).addTaskResidentLaunched().getInstance()
+    lazy val reservedLaunchedInstance: Instance = TestInstanceBuilder.
+      newBuilder(appId).addTaskResidentLaunched(Seq.empty).getInstance()
 
     lazy val notExistingInstanceId = Instance.Id.forRunSpec(appId)
     lazy val unreachableInstance = TestInstanceBuilder.newBuilder(appId).addTaskUnreachable().getInstance()

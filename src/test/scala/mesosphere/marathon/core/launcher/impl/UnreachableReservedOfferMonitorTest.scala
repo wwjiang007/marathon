@@ -20,7 +20,7 @@ class UnreachableReservedOfferMonitorTest extends AkkaUnitTest with Inside {
     Map.empty[Instance.Id, Future[Option[Instance]]].withDefaultValue(Future.successful(None))
 
   val appId = "/test".toRootPath
-  val agentInfo = AgentInfo("host", Some("deadbeef-S01"), Nil)
+  val agentInfo = AgentInfo("host", Some("deadbeef-S01"), None, None, Nil)
 
   def reservationFor(instance: Instance, frameworkId: FrameworkId = myFrameworkId) = {
     val labels = TaskLabels.labelsForTask(frameworkId, instance.tasksMap.values.head.taskId).labels
@@ -42,8 +42,8 @@ class UnreachableReservedOfferMonitorTest extends AkkaUnitTest with Inside {
   def newBuilder =
     TestInstanceBuilder.newBuilder(appId).withAgentInfo(agentInfo)
 
-  val runningInstance = newBuilder.addTaskResidentLaunched().getInstance
-  val unreachableInstance = newBuilder.addTaskResidentUnreachable().getInstance
+  val runningInstance = newBuilder.addTaskResidentLaunched(Seq.empty).getInstance()
+  val unreachableInstance = newBuilder.addTaskUnreachable(Seq.empty).getInstance()
 
   def reservedOffer(instances: Seq[Instance]) = {
     val b = MarathonTestHelper.makeBasicOffer(role = "marathon").clearResources()

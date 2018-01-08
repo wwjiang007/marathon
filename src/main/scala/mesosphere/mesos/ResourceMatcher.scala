@@ -1,12 +1,17 @@
 package mesosphere.mesos
 
+import java.time.Clock
+
 import com.typesafe.scalalogging.StrictLogging
+import mesosphere.marathon.Features
 import mesosphere.marathon.core.instance.Instance
 import mesosphere.marathon.core.launcher.impl.TaskLabels
-import mesosphere.marathon.state.{ DiskSource, DiskType, PersistentVolume, ResourceRole, RunSpec }
+import mesosphere.marathon.core.pod.PodDefinition
+import mesosphere.marathon.plugin.scheduler.SchedulerPlugin
+import mesosphere.marathon.state._
 import mesosphere.marathon.stream.Implicits._
-import mesosphere.marathon.tasks.{ PortsMatch, PortsMatcher, ResourceUtil }
-import mesosphere.mesos.protos.Resource
+import mesosphere.marathon.tasks.{ OfferUtil, PortsMatch, PortsMatcher, ResourceUtil }
+import mesosphere.mesos.protos.{ Resource, ResourceProviderID }
 import org.apache.mesos.Protos
 import org.apache.mesos.Protos.Offer
 import org.apache.mesos.Protos.Resource.DiskInfo.Source
@@ -31,7 +36,7 @@ object ResourceMatcher extends StrictLogging {
         portsMatch.resources
 
     // TODO - this assumes that volume matches are one resource to one volume, which should be correct, but may not be.
-    val localVolumes: Seq[(DiskSource, PersistentVolume)] =
+    val localVolumes: Seq[DiskResourceMatch.ConsumedVolume] =
       scalarMatches.collect { case r: DiskResourceMatch => r.volumes }.flatten
   }
 
@@ -129,7 +134,7 @@ object ResourceMatcher extends StrictLogging {
     * the reservation.
     */
   def matchResources(offer: Offer, runSpec: RunSpec, knownInstances: => Seq[Instance],
-    selector: ResourceSelector): ResourceMatchResponse = {
+    selector: ResourceSelector, conf: MatcherConf, schedulerPlugins: Seq[SchedulerPlugin], localRegion: Option[Region] = None)(implicit clock: Clock): ResourceMatchResponse = {
 
     val groupedResources: Map[Role, Seq[Protos.Resource]] = offer.getResourcesList.groupBy(_.getName).map { case (k, v) => k -> v.to[Seq] }
 
@@ -140,13 +145,29 @@ object ResourceMatcher extends StrictLogging {
     // that means if the resources that are matched are still unreserved.
     def needToReserveDisk = selector.needToReserve && runSpec.diskForPersistentVolumes > 0
 
-    val diskMatch = if (needToReserveDisk)
+    val diskMatch = if (needToReserveDisk) {
+      val volumes = runSpec.persistentVolumes
+      val mounts = runSpec.persistentVolumeMounts
+      val volumesWithMounts = runSpec match {
+        case _: AppDefinition =>
+          volumes.zip(mounts).map {
+            case (volume, mount) => VolumeWithMount(volume, mount)
+          }
+        case _: PodDefinition =>
+          volumes.map { volume =>
+            val mountPath = volume.name.getOrElse(throw new IllegalStateException("Failed to retrieve a volume name"))
+            val mount = VolumeMount(volume.name, mountPath, readOnly = false)
+            VolumeWithMount(volume, mount)
+          }
+      }
       diskResourceMatch(
+        runSpec,
         runSpec.resources.disk,
-        runSpec.persistentVolumes,
+        volumesWithMounts,
         ScalarMatchResult.Scope.IncludingLocalVolumes)
-    else
-      diskResourceMatch(runSpec.resources.disk, Nil, ScalarMatchResult.Scope.ExcludingLocalVolumes)
+    } else {
+      diskResourceMatch(runSpec, runSpec.resources.disk, Nil, ScalarMatchResult.Scope.ExcludingLocalVolumes)
+    }
 
     val scalarMatchResults = (
       Seq(
@@ -172,6 +193,14 @@ object ResourceMatcher extends StrictLogging {
 
     def portsMatchOpt: Option[PortsMatch] = PortsMatcher(runSpec, offer, selector).portsMatch
 
+    val meetsFaultDomainRequirements: Boolean = {
+      val faultDomainFields = Set(Constraints.regionField, Constraints.zoneField)
+      val offerHasFaultDomainConstraints = runSpec.constraints.exists(c => faultDomainFields.contains(c.getField))
+      val maybeOfferRegion = OfferUtil.region(offer)
+      val offerIsFromLocalRegion = maybeOfferRegion.isEmpty || localRegion.exists(region => maybeOfferRegion.contains(region.value))
+      offerHasFaultDomainConstraints || offerIsFromLocalRegion
+    }
+
     val meetsAllConstraints: Boolean = {
       lazy val instances = knownInstances.filter { inst =>
         // we ignore instances of older configurations: this way we can place a new instance on an agent that already
@@ -194,7 +223,24 @@ object ResourceMatcher extends StrictLogging {
       badConstraints.isEmpty
     }
 
-    val resourceMatchOpt = if (scalarMatchResults.forall(_.matches) && meetsAllConstraints) {
+    val checkAvailability: Boolean = {
+      if (conf.availableFeatures.contains(Features.MAINTENANCE_MODE)) {
+        val result = Availability.offerAvailable(offer, conf.drainingTime)
+        noOfferMatchReasons += NoOfferMatchReason.UnfulfilledConstraint
+        // Add unavailability to noOfferMatchReasons
+        noOfferMatchReasons += NoOfferMatchReason.AgentMaintenance
+        logger.info(
+          s"Offer [${offer.getId.getValue}]. Agent [${offer.getSlaveId}] on host [${offer.getHostname}] unavailable.\n"
+        )
+        result
+      } else true
+    }
+
+    val resourceMatchOpt = if (scalarMatchResults.forall(_.matches)
+      && meetsFaultDomainRequirements
+      && meetsAllConstraints
+      && checkAvailability
+      && schedulerPlugins.forall(_.isMatch(offer, runSpec))) {
       portsMatchOpt match {
         case Some(portsMatch) =>
           Some(ResourceMatch(scalarMatchResults.collect { case m: ScalarMatch => m }, portsMatch))
@@ -280,14 +326,22 @@ object ResourceMatcher extends StrictLogging {
     */
   private[this] def matchDiskResource(
     groupedResources: Map[Role, Seq[Protos.Resource]], selector: ResourceSelector)(
+    runSpec: RunSpec,
     scratchDisk: Double,
-    volumes: Seq[PersistentVolume],
+    volumesWithMounts: Seq[VolumeWithMount[PersistentVolume]],
     scope: ScalarMatchResult.Scope = ScalarMatchResult.Scope.NoneDisk): Seq[ScalarMatchResult] = {
+
+    def matchesProfileName(profileName: Option[String], resource: Protos.Resource): Boolean = {
+      profileName.forall { specifiedProfileName =>
+        resource.hasDisk && resource.getDisk.hasSource && resource.getDisk.getSource.hasProfile &&
+          specifiedProfileName == resource.getDisk.getSource.getProfile
+      }
+    }
 
     @tailrec
     def findMatches(
       diskType: DiskType,
-      pendingAllocations: List[Either[Double, PersistentVolume]],
+      pendingAllocations: List[Either[Double, VolumeWithMount[PersistentVolume]]],
       resourcesRemaining: List[SourceResources],
       resourcesConsumed: List[DiskResourceMatch.Consumption] = Nil): Either[DiskResourceNoMatch, DiskResourceMatch] = {
       val orderedResources = prioritizeDiskResources(diskType, resourcesRemaining)
@@ -298,10 +352,13 @@ object ResourceMatcher extends StrictLogging {
         case nextAllocation :: restAllocations =>
           val (matcher, nextAllocationSize) = nextAllocation match {
             case Left(size) => ({ _: Protos.Resource => true }, size)
-            case Right(v) => (
-              VolumeConstraints.meetsAllConstraints(_: Protos.Resource, v.persistent.constraints),
-              v.persistent.size.toDouble
-            )
+            case Right(VolumeWithMount(volume, _)) =>
+              def matcher(resource: Protos.Resource): Boolean = {
+                VolumeConstraints.meetsAllConstraints(resource, volume.persistent.constraints) &&
+                  matchesProfileName(volume.persistent.profileName, resource)
+              }
+
+              (matcher _, volume.persistent.size.toDouble)
           }
 
           findDiskGroupMatches(nextAllocationSize, orderedResources, orderedResources, matcher) match {
@@ -310,7 +367,8 @@ object ResourceMatcher extends StrictLogging {
                 DiskResourceNoMatch(resourcesConsumed, resourcesRemaining.flatMap(_.resources), nextAllocation, scope))
             case Some((source, generalConsumptions, decrementedResources)) =>
               val consumptions = generalConsumptions.map { c =>
-                DiskResourceMatch.Consumption(c, source, nextAllocation.right.toOption)
+                val volumeWithMount = nextAllocation.right.toOption
+                DiskResourceMatch.Consumption(c, source, volumeWithMount)
               }
 
               findMatches(
@@ -331,8 +389,9 @@ object ResourceMatcher extends StrictLogging {
       *
       * If this method can be generalized to worth with the above code, then so be it.
       */
-    @tailrec def findMountMatches(
-      pendingAllocations: List[PersistentVolume],
+    @tailrec
+    def findMountMatches(
+      pendingAllocations: List[VolumeWithMount[PersistentVolume]],
       resources: List[Protos.Resource],
       resourcesConsumed: List[DiskResourceMatch.Consumption] = Nil): Either[DiskResourceNoMatch, DiskResourceMatch] = {
       pendingAllocations match {
@@ -341,23 +400,23 @@ object ResourceMatcher extends StrictLogging {
         case nextAllocation :: restAllocations =>
           resources.find { resource =>
             val resourceSize = resource.getScalar.getValue
-            VolumeConstraints.meetsAllConstraints(resource, nextAllocation.persistent.constraints) &&
-              (resourceSize >= nextAllocation.persistent.size) &&
-              (resourceSize <= nextAllocation.persistent.maxSize.getOrElse(Long.MaxValue))
+            VolumeConstraints.meetsAllConstraints(resource, nextAllocation.volume.persistent.constraints) &&
+              (resourceSize >= nextAllocation.volume.persistent.size) &&
+              (resourceSize <= nextAllocation.volume.persistent.maxSize.getOrElse(Long.MaxValue)) &&
+              matchesProfileName(nextAllocation.volume.persistent.profileName, resource)
           } match {
             case Some(matchedResource) =>
               val consumedAmount = matchedResource.getScalar.getValue
-              val grownVolume =
-                nextAllocation.copy(
-                  persistent = nextAllocation.persistent.copy(
-                    size = consumedAmount.toLong))
+              val grownVolumeWithMount = nextAllocation.copy(volume = nextAllocation.volume.copy(
+                persistent = nextAllocation.volume.persistent.copy(size = consumedAmount.toLong)))
               val consumption =
                 DiskResourceMatch.Consumption(
                   consumedAmount,
                   role = matchedResource.getRole,
+                  providerId = if (matchedResource.hasProviderId) Option(ResourceProviderID(matchedResource.getProviderId.getValue)) else None,
                   reservation = if (matchedResource.hasReservation) Option(matchedResource.getReservation) else None,
                   source = DiskSource.fromMesos(matchedResource.getDiskSourceOption),
-                  Some(grownVolume))
+                  Some(grownVolumeWithMount))
 
               findMountMatches(
                 restAllocations,
@@ -376,17 +435,17 @@ object ResourceMatcher extends StrictLogging {
     }.withDefault(_ => Nil)
 
     val scratchDiskRequest = if (scratchDisk > 0.0) Some(Left(scratchDisk)) else None
-    val requestedResourcesByType: Map[DiskType, Seq[Either[Double, PersistentVolume]]] =
-      (scratchDiskRequest ++ volumes.map(Right(_)).toList).groupBy {
+    val requestedResourcesByType: Map[DiskType, Seq[Either[Double, VolumeWithMount[PersistentVolume]]]] =
+      (scratchDiskRequest ++ volumesWithMounts.map(Right(_)).toList).groupBy {
         case Left(_) => DiskType.Root
-        case Right(p) => p.persistent.`type`
+        case Right(vm) => vm.volume.persistent.`type`
       }.map { case (k, v) => k -> v.to[Seq] }
 
     requestedResourcesByType.keys.map { diskType =>
       val withBiggestRequestsFirst =
         requestedResourcesByType(diskType).
           toList.
-          sortBy({ r => r.right.map(_.persistent.size.toDouble).merge })(implicitly[Ordering[Double]].reverse)
+          sortBy({ r => r.right.map(_.volume.persistent.size.toDouble).merge })(implicitly[Ordering[Double]].reverse)
 
       val resources: List[Protos.Resource] = resourcesByType(diskType).filterAs(selector(_))(collection.breakOut)
 
@@ -449,8 +508,9 @@ object ResourceMatcher extends StrictLogging {
             val consume = Math.min(valueLeft, nextResource.getScalar.getValue)
             val decrementedResource = ResourceUtil.consumeScalarResource(nextResource, consume)
             val newValueLeft = valueLeft - consume
+            val providerId = if (nextResource.hasProviderId) Option(ResourceProviderID(nextResource.getProviderId.getValue)) else None
             val reservation = if (nextResource.hasReservation) Option(nextResource.getReservation) else None
-            val consumedValue = GeneralScalarMatch.Consumption(consume, nextResource.getRole, reservation)
+            val consumedValue = GeneralScalarMatch.Consumption(consume, nextResource.getRole, providerId, reservation)
 
             consumeResources(newValueLeft, restResources, (decrementedResource ++ resourcesNotConsumed).toList,
               consumedValue :: resourcesConsumed, matcher)

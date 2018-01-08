@@ -7,7 +7,6 @@ title: Command Line Flags
 * `JAVA_OPTS`  Default: `-Xmx512m`
     Any options that should be passed to the JVM that marathon will run in.
 
-
 # Marathon Command Line Flags
 
 ## Core Functionality
@@ -43,6 +42,7 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     - "vips" can be used to enable the networking VIP integration UI.
     - "task\_killing" can be used to enable the TASK\_KILLING state in Mesos (0.28 or later)
     - "external\_volumes" can be used if the cluster is configured to use external volumes.
+    - "maintenance_mode" can be used to respect maintenance window during offer matching.
     Example: `--enable_features vips,task_killing,external_volumes`
 * `--executor` (Optional. Default: "//cmd"): Executor to use when none is
     specified.
@@ -78,7 +78,7 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     service ports to apps. If you assign your service port statically in your app definition, it does
     not have to be in this range.
 * `--mesos_role` (Optional. Default: None): Mesos role for this framework. If set, Marathon receives resource offers
-    for the specified role in addition to resources with the role designation '*'.
+    for the specified role in addition to resources with the role designation '*'. This parameter is only applied the first time the framework registers with Mesos. If you change this parameter to another value later, or leave it out, this will not have an effect on the role for which Marathon is registered.
 * <span class="label label-default">v0.9.0</span> `--default_accepted_resource_roles` (Optional. Default: all roles):
     Default for the `"acceptedResourceRoles"`
     attribute as a comma-separated list of strings. All app definitions which do not specify this attribute explicitly
@@ -164,8 +164,6 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     disconnected from the master.
 * `--mesos_bridge_name` (Optional. Default: mesos-bridge):
     The name of the Mesos CNI network used by MESOS-type containers configured to use bridged networking
-* <span class="label label-default">v1.5.0</span>`--minimum_viable_task_execution_duration` (Optional. Default: 60 seconds):
-    Delay (in ms) after which a task is considered viable. If the task starts up correctly, but fails during this timeout, the application is backed off.
 * <span class="label label-default">v1.5.0</span>`--backup_location` (Optional. Default: None):
     Create a backup before a migration is applied to the persistent store.
     This backup can be used to restore the state at that time.
@@ -174,6 +172,9 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     - S3 provider (experimental): s3://bucket-name/key-in-bucket?access_key=xxx&secret_key=xxx&region=eu-central-1
       Please note: access_key and secret_key are optional.
       If not provided, the [AWS default credentials provider chain](http://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/credentials.html) is used to look up aws credentials.
+* <span class="label label-default">v1.6.0</span>`--draining_seconds` (Optional. Default: 0):
+    Time (in seconds) when marathon will start declining offers before a [maintenance window](http://mesos.apache.org/documentation/latest/maintenance/) start time.
+    **Note:** In order to activate the `--draining_seconds` configuration, you must add `maintenance_mode` to the set of `--enable_features`.
 
 ## Tuning Flags for Offer Matching/Launching Tasks
 

@@ -150,7 +150,7 @@ Instructions on how to install prepackaged releases are available [in the Marath
         export MESOS_NATIVE_JAVA_LIBRARY="/path/to/mesos/lib/libmesos.dylib"
         ```
    
-1.  Run `sbt universal:packageXzTarball` to package Marathon as an txz file
+1.  Run `sbt universal:packageZipTarball` to package Marathon as an txz file
     containing bin/marathon fully packaged.
 
 1. Run `sbt docker:publishLocal` for a local marathon docker image.
@@ -202,7 +202,9 @@ If you want to inspect the contents of the Docker container:
 
     docker run -it --entrypoint=/bin/bash marathon:{version} -s
 
-Test it:
+### Testing
+
+The tests and integration tests a run with:
 
     sbt test integration:test
 
@@ -213,7 +215,11 @@ You have to set the Mesos test IP and disable Docker tests on Mac:
     RUN_MESOS_INTEGRATION_TESTS=false \
     sbt test integration:test
 
-The Docker integration tests are not supported on Mac.
+The Docker integration tests are not supported on Mac. The tests start and stop
+local Mesos clusters and Marathon instances. Sometimes processes leak after
+failed test runs. You can check them with `ps aux | grep "python|java|mesos"`
+and kill all `app_mock.py` processes and Mesos and Marathon instances unless
+they do not belong to a production environment of course.
 
 Also see the [CI instructions](ci/README.md) on running specfic build pipeline
 targets.
@@ -234,6 +240,7 @@ To develop on the web UI look into the instructions of the [Marathon UI](https:/
             ./chronos/target/chronos-1.0-SNAPSHOT.jar" -c 1.0 -m 1024
 * [Ruby gem marathon_deploy](https://github.com/eBayClassifiedsGroup/marathon_deploy) alternative command line tool to deploy using json or yaml files with ENV macros.
 * [Scala client](https://github.com/guidewire/marathon-client), developed at Guidewire
+* [Java client](https://github.com/mesosphere/marathon-client), developed at [Mesosphere](https://mesosphere.com)
 * [Java client](https://github.com/mohitsoni/marathon-client) by Mohit Soni
 * [Maven plugin](https://github.com/dcos-labs/dcos-maven-plugin), developed by [Johannes Unterstein](https://github.com/unterstein)
 * [Maven plugin](https://github.com/holidaycheck/marathon-maven-plugin), developed at [HolidayCheck](http://www.holidaycheck.com/)
@@ -256,6 +263,7 @@ Across all installations Marathon is managing applications on more than 100,000 
 * [Argus Cyber Security](http://argus-sec.com/)
 * [Artirix](http://www.artirix.com/)
 * [Arukas](https://arukas.io/)
+* [Avast](https://www.avast.com/)
 * [bol.com](https://www.bol.com/)
 * [Brand24](https://brand24.com/)
 * [Branding Brand](http://www.brandingbrand.com/)
@@ -265,6 +273,7 @@ Across all installations Marathon is managing applications on more than 100,000 
 * [Criteo](http://www.criteo.com/)
 * [Daemon](http://www.daemon.com.au/)
 * [DataMan](http://www.shurenyun.com/)
+* [Deutsche Telekom](https://www.telekom.com/)
 * [DHL Parcel](https://www.dhlparcel.nl/)
 * [Disqus](https://disqus.com/)
 * [DueDil](https://www.duedil.com/)
@@ -279,6 +288,7 @@ Across all installations Marathon is managing applications on more than 100,000 
 * [Human API](https://humanapi.co/)
 * [Indix](http://www.indix.com/)
 * [ING](http://www.ing.com/)
+* [Intent HQ](https://www.intenthq.com/)
 * [iQIYI](http://www.iqiyi.com/)
 * [LaunchKey](https://launchkey.com/)
 * [Mapillary](https://www.mapillary.com/)
@@ -300,10 +310,12 @@ Across all installations Marathon is managing applications on more than 100,000 
 * [SmartProcure](https://smartprocure.us/)
 * [Strava](https://www.strava.com)
 * [Sveriges Television](http://www.svt.se)
+* [Salesforce](http://www.salesforce.com)
 * [T2 Systems](http://t2systems.com)
 * [Tapad](https://tapad.com)
 * [Teradata](http://www.teradata.com)
 * [trivago](http://www.trivago.com/)
+* [tronc / L.A. Times](http://www.tronc.com/about-us/)
 * [VANAD Enovation](http://www.vanadenovation.nl/)
 * [Viadeo](http://www.viadeo.com)
 * [Wikia](http://www.wikia.com/Wikia)
@@ -318,13 +330,13 @@ Not in the list? Open a pull request and add yourself!
 Have you found an issue? Feel free to report it using our [JIRA Issues](https://jira.mesosphere.com/projects/MARATHON/summary) page.
 In order to speed up response times, we ask you to provide as much
 information on how to reproduce the problem as possible. If the issue is related
- in any way to the web ui, we kindly ask you to use the `gui` label.
+ in any way to the web UI, we kindly ask you to use the `gui` label.
 
-If you have questions, please post on the
-[Marathon Framework Group](https://groups.google.com/forum/?hl=en#!forum/marathon-framework)
-email list. You can find Marathon support in the `#marathon` channel, and Mesos
-support in the `#mesos` channel, on [freenode][freenode] (IRC). The team at
-[Mesosphere][Mesosphere] is also happy to answer any questions.
+If you have questions, please post on the [Marathon Framework](https://groups.google.com/forum/?hl=en#!forum/marathon-framework) email list. 
+
+You can find Marathon support in the `#marathon` channel, and Mesos support in the `#mesos` channel, on [freenode][freenode] (IRC). Alternatively, check out the same channels on the [Mesos Slack](https://mesos.slack.com/) ([request an invitation here](https://mesos-slackin.herokuapp.com/)). 
+
+The team at [Mesosphere][Mesosphere] is also happy to answer any questions.
 
 If you'd like to take part in design research and test new features in Marathon before they're released, please add your name to our [UX Research](http://uxresearch.mesosphere.com) list.
 

@@ -12,7 +12,7 @@ import mesosphere.marathon.core.event.UnknownInstanceTerminated
 import mesosphere.marathon.core.instance.Instance
 import mesosphere.marathon.core.instance.update.InstanceUpdateOperation
 import mesosphere.marathon.core.task.termination.{ KillReason, KillService }
-import mesosphere.marathon.core.task.tracker.{ InstanceTracker, TaskStateOpProcessor }
+import mesosphere.marathon.core.task.tracker.{ InstanceTracker, InstanceStateOpProcessor }
 import mesosphere.marathon.core.task.update.TaskStatusUpdateProcessor
 import mesosphere.marathon.core.task.{ Task, TaskCondition }
 import mesosphere.marathon.metrics.{ Metrics, ServiceMetric, Timer }
@@ -26,7 +26,7 @@ import scala.concurrent.Future
 class TaskStatusUpdateProcessorImpl @Inject() (
     clock: Clock,
     instanceTracker: InstanceTracker,
-    stateOpProcessor: TaskStateOpProcessor,
+    stateOpProcessor: InstanceStateOpProcessor,
     driverHolder: MarathonSchedulerDriverHolder,
     killService: KillService,
     eventStream: EventStream) extends TaskStatusUpdateProcessor with StrictLogging {
@@ -47,7 +47,21 @@ class TaskStatusUpdateProcessorImpl @Inject() (
     val taskId = Task.Id(status.getTaskId)
     val taskCondition = TaskCondition(status)
 
+    def taskIsUnknown(instance: Instance, taskId: Task.Id) = {
+      instance.tasksMap.get(taskId).isEmpty
+    }
+
     instanceTracker.instance(taskId.instanceId).flatMap {
+      case Some(instance) if taskIsUnknown(instance, taskId) =>
+        if (killWhenUnknown(taskCondition)) {
+          killUnknownTaskTimer {
+            logger.warn(s"Kill ${taskId} because it's unknown to marathon. " +
+              s"The related instance ${instance.instanceId} is associated with ${instance.tasksMap.keys}")
+            Future.successful(killService.killUnknownTask(taskId, KillReason.NotInSync))
+          }
+        }
+        acknowledge(status)
+
       case Some(instance) =>
         // TODO(PODS): we might as well pass the taskCondition here
         val op = InstanceUpdateOperation.MesosUpdate(instance, status, now)

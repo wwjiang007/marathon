@@ -2,9 +2,7 @@ package mesosphere.marathon
 package integration
 
 import java.io.File
-
 import mesosphere.AkkaIntegrationTest
-import mesosphere.marathon.integration.facades.MarathonFacade
 import mesosphere.marathon.integration.facades.MarathonFacade.extractDeploymentIds
 import mesosphere.marathon.integration.setup._
 import mesosphere.marathon.raml.{ App, AppUpdate }
@@ -16,10 +14,6 @@ import scala.concurrent.duration._
   * Do not add tests to this class. See the notes in [[NonDestructiveLeaderIntegrationTest]].
   */
 abstract class LeaderIntegrationTest extends AkkaIntegrationTest with MarathonClusterTest {
-
-  protected def nonLeader(leader: String): MarathonFacade = {
-    marathonFacades.find(!_.url.contains(leader)).get
-  }
 
   protected def leadingServerProcess(leader: String): LocalMarathon =
     (additionalMarathons :+ marathonServer).find(_.client.url.contains(leader)).getOrElse(
@@ -134,7 +128,7 @@ class ReelectionLeaderIntegrationTest extends LeaderIntegrationTest {
 
         And("the leader must have died")
         WaitTestSupport.waitUntil("the former leading marathon process dies", 30.seconds) { !leadingProcess.isRunning() }
-        leadingProcess.stop() // already stopped, but still need to clear old state
+        leadingProcess.stop().futureValue // already stopped, but still need to clear old state
 
         And("the leader must have changed")
         WaitTestSupport.waitUntil("the leader changes") {
@@ -198,7 +192,7 @@ class KeepAppsRunningDuringAbdicationIntegrationTest extends LeaderIntegrationTe
 
       And("the leader must have died")
       WaitTestSupport.waitUntil("the former leading marathon process dies", 30.seconds) { !leadingProcess.isRunning() }
-      leadingProcess.stop() // already stopped, but still need to clear old state
+      leadingProcess.stop().futureValue // already stopped, but still need to clear old state
 
       And("the leader must have changed")
       WaitTestSupport.waitUntil("the leader changes") {
@@ -274,7 +268,7 @@ class BackupRestoreIntegrationTest extends LeaderIntegrationTest {
 
       And("the leader must have died")
       WaitTestSupport.waitUntil("the former leading marathon process dies", 30.seconds) { !leadingProcess1.isRunning() }
-      leadingProcess1.stop() // already stopped, but still need to clear old state
+      leadingProcess1.stop().futureValue // already stopped, but still need to clear old state
 
       And("the leader must have changed")
       WaitTestSupport.waitUntil("the leader changes", 30.seconds) {
@@ -391,7 +385,7 @@ class DeleteAppAndBackupIntegrationTest extends LeaderIntegrationTest {
 
       And("the leader must have died")
       WaitTestSupport.waitUntil("the former leading marathon process dies", 30.seconds) { !leadingProcess.isRunning() }
-      leadingProcess.stop() // already stopped, but still need to clear old state
+      leadingProcess.stop().futureValue // already stopped, but still need to clear old state
 
       And("the leader must have changed")
       WaitTestSupport.waitUntil("the leader changes", 30.seconds) {
@@ -421,7 +415,7 @@ class DeleteAppAndBackupIntegrationTest extends LeaderIntegrationTest {
       WaitTestSupport.waitUntil("the former leading marathon process dies", 30.seconds) {
         !leadingProcess2.isRunning()
       }
-      leadingProcess2.stop() // already stopped, but still need to clear old state
+      leadingProcess2.stop().futureValue // already stopped, but still need to clear old state
 
       And("the leader must have changed")
       WaitTestSupport.waitUntil("the leader changes", 30.seconds) {

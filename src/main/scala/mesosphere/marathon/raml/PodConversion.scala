@@ -5,11 +5,12 @@ import mesosphere.marathon.core.pod
 import mesosphere.marathon.core.pod.PodDefinition
 import mesosphere.marathon.core.pod.PodDefinition._
 import mesosphere.marathon.state.{ PathId, Timestamp }
+import mesosphere.marathon.state
 
 import scala.concurrent.duration._
 
 trait PodConversion extends NetworkConversion with ConstraintConversion with ContainerConversion with EnvVarConversion
-    with SecretConversion with UnreachableStrategyConversion with KillSelectionConversion {
+  with SecretConversion with UnreachableStrategyConversion with KillSelectionConversion {
 
   implicit val podRamlReader: Reads[Pod, PodDefinition] = Reads { podd =>
     val instances = podd.scaling.fold(DefaultInstances) {
@@ -52,8 +53,8 @@ trait PodConversion extends NetworkConversion with ConstraintConversion with Con
       containers = podd.containers.map(Raml.fromRaml(_)),
       instances = instances,
       constraints = constraints,
-      version = podd.version.fold(Timestamp.now())(Timestamp(_)),
-      podVolumes = podd.volumes.map(Raml.fromRaml(_)),
+      versionInfo = state.VersionInfo.OnlyVersion(podd.version.fold(Timestamp.now())(Timestamp(_))),
+      volumes = podd.volumes.map(Raml.fromRaml(_)),
       networks = networks,
       backoffStrategy = backoffStrategy,
       upgradeStrategy = upgradeStrategy,
@@ -73,6 +74,7 @@ trait PodConversion extends NetworkConversion with ConstraintConversion with Con
       backoff = podDef.backoffStrategy.backoff.toMillis.toDouble / 1000.0,
       maxLaunchDelay = podDef.backoffStrategy.maxLaunchDelay.toMillis.toDouble / 1000.0,
       backoffFactor = podDef.backoffStrategy.factor)
+
     val schedulingPolicy = PodSchedulingPolicy(
       Some(ramlBackoffStrategy),
       Some(ramlUpgradeStrategy),
@@ -95,7 +97,7 @@ trait PodConversion extends NetworkConversion with ConstraintConversion with Con
       scaling = Some(scalingPolicy),
       secrets = Raml.toRaml(podDef.secrets),
       scheduling = Some(schedulingPolicy),
-      volumes = podDef.podVolumes.map(Raml.toRaml(_)),
+      volumes = podDef.volumes.map(Raml.toRaml(_)),
       networks = podDef.networks.map(Raml.toRaml(_)),
       executorResources = Some(podDef.executorResources.toRaml)
     )

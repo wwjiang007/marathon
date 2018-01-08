@@ -1,58 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Enable Jessie backports to install the latest Java JRE.
-cat <<EOF >>/etc/apt/sources.list
-
-# Debian backports
-deb http://httpredir.debian.org/debian jessie-backports main
-EOF
+apt-get install -y dirmngr
 
 # Add sbt repo.
 echo "deb https://dl.bintray.com/sbt/debian /" | tee -a /etc/apt/sources.list.d/sbt.list
 apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 2EE0EA64E40A89B84B2DF73499E82A75642AC823
 
 # Add Docker repo.
-echo "deb https://apt.dockerproject.org/repo debian-jessie main" | tee -a /etc/apt/sources.list.d/docker.list
+echo "deb https://apt.dockerproject.org/repo debian-stretch main" | tee -a /etc/apt/sources.list.d/docker.list
 apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
 
 # Add Mesos repo.
 apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv E56151BF && \
-  echo "deb http://repos.mesosphere.com/debian jessie-unstable main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \
-  echo "deb http://repos.mesosphere.com/debian jessie-testing main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \
-  echo "deb http://repos.mesosphere.com/debian jessie main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \
-
-  apt-get -y update
+  echo "deb http://repos.mesosphere.com/debian stretch-unstable main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \
+  echo "deb http://repos.mesosphere.com/debian stretch-testing main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \
+  echo "deb http://repos.mesosphere.com/debian stretch main" | tee -a /etc/apt/sources.list.d/mesosphere.list
+apt-get -y update
 
 # Add github.com to known hosts
 ssh-keyscan github.com >> /home/admin/.ssh/known_hosts
 ssh-keyscan github.com >> /root/.ssh/known_hosts
 
 # Install dependencies
-apt install -t jessie-backports -y openjdk-8-jdk
-update-java-alternatives -s java-1.8.0-openjdk-amd64
-
 apt-get install -y \
-        git \
-        php5-cli \
-        php5-curl \
-        sbt \
-        docker-engine \
-        curl \
         build-essential \
+        curl \
+        docker-engine \
+        git \
+        openjdk-8-jdk \
+        libssl-dev \
         rpm \
-        npm
+        sbt \
+        zlib1g-dev
+
+# Download, compile and install Python 3.6.2
+wget https://www.python.org/ftp/python/3.6.2/Python-3.6.2.tgz
+tar xvf Python-3.6.2.tgz && cd Python-3.6.2/
+./configure --enable-optimizations
+make -j
+sudo make altinstall
+cd ../ && rm -r Python-3.6.2
+
+# Install pip
+wget https://bootstrap.pypa.io/get-pip.py
+python3 get-pip.py
+
+# Install falke8
+pip3 install flake8
 
 # Download (but don't install) Mesos and its dependencies.
 # The CI task will install Mesos later.
 apt-get install -y --force-yes --no-install-recommends mesos=$MESOS_VERSION
 systemctl stop mesos-master.service mesos-slave.service mesos_executor.slice
-
-# Add arcanist
-mkdir -p /opt/arcanist
-git clone https://github.com/phacility/libphutil.git /opt/arcanist/libphutil
-git clone https://github.com/phacility/arcanist.git /opt/arcanist/arcanist
-ln -sf /opt/arcanist/arcanist/bin/arc /usr/local/bin/
 
 # Add user to docker group
 gpasswd -a admin docker
@@ -64,10 +64,6 @@ apt-get install -y nodejs
 # Setup system
 systemctl enable docker
 update-ca-certificates -f
-
-echo "{\"hosts\":{\"https://phabricator.mesosphere.com/api/\":{\"token\":\"$CONDUIT_TOKEN\"}}}" > /home/admin/.arcrc
-chown admin /home/admin/.arcrc
-chmod 0600 /home/admin/.arcrc
 
 # Install jq
 curl -L -o /usr/local/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64 && sudo chmod +x /usr/local/bin/jq

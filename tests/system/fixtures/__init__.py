@@ -1,9 +1,12 @@
+import aiohttp
 import common
+import json
 import os.path
 import pytest
 import shakedown
-
 from datetime import timedelta
+from sseclient.async import SSEClient
+from urllib.parse import urljoin
 
 
 def fixtures_dir():
@@ -31,17 +34,19 @@ def wait_for_marathon_user_and_cleanup():
     print("exiting wait_for_marathon_user_and_cleanup fixture")
 
 
-@pytest.fixture(scope="function")
-def events_to_file():
-    print("entering events_to_file fixture")
-    shakedown.run_command_on_master('rm events.txt')
-    shakedown.run_command_on_master(
-        'curl --compressed -H "Cache-Control: no-cache" -H "Accept: text/event-stream" '
-        '-o events.txt leader.mesos:8080/v2/events &')
-    yield
-    shakedown.kill_process_on_host(shakedown.master_ip(), '[c]url')
-    shakedown.run_command_on_master('rm events.txt')
-    print("exiting events_to_file fixture")
+@pytest.fixture
+async def sse_events():
+    url = urljoin(shakedown.dcos_url(), 'service/marathon/v2/events')
+    headers = {'Authorization': 'token={}'.format(shakedown.dcos_acs_token()),
+               'Accept': 'text/event-stream'}
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.get(url) as response:
+            async def internal_generator():
+                client = SSEClient(response.content)
+                async for event in client.events():
+                    yield json.loads(event.data)
+
+            yield internal_generator()
 
 
 @pytest.fixture(scope="function")

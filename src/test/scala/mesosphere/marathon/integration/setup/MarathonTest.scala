@@ -1,6 +1,7 @@
 package mesosphere.marathon
 package integration.setup
 
+import com.typesafe.scalalogging.Logger
 import java.io.File
 import java.net.{ URLDecoder, URLEncoder }
 import java.nio.file.Files
@@ -22,14 +23,14 @@ import com.typesafe.scalalogging.StrictLogging
 import mesosphere.AkkaUnitTestLike
 import mesosphere.marathon.api.RestResource
 import mesosphere.marathon.integration.facades._
-import mesosphere.marathon.raml.{ App, AppDockerVolume, Network, NetworkMode, AppHealthCheck, PodState, PodStatus, ReadMode }
+import mesosphere.marathon.raml.{ App, AppHostVolume, AppHealthCheck, Network, NetworkMode, PodState, PodStatus, ReadMode }
 import mesosphere.marathon.state.PathId
-import mesosphere.marathon.util.{ Lock, Retry }
+import mesosphere.marathon.util.{ Lock, Retry, Timeout }
 import mesosphere.util.PortAllocator
 import org.apache.commons.io.FileUtils
 import org.scalatest.concurrent.{ Eventually, ScalaFutures }
 import org.scalatest.exceptions.TestFailedDueToTimeoutException
-import org.scalatest.time.{ Milliseconds, Span }
+import org.scalatest.time.{ Milliseconds, Minutes, Seconds, Span }
 import org.scalatest.{ BeforeAndAfterAll, Suite }
 import play.api.libs.json.{ JsObject, Json }
 
@@ -40,6 +41,7 @@ import scala.concurrent.duration._
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.sys.process.Process
 import scala.util.Try
+import scala.util.control.NonFatal
 
 /**
   * Runs a marathon server for the given test suite
@@ -57,7 +59,7 @@ case class LocalMarathon(
     zkUrl: String,
     conf: Map[String, String] = Map.empty,
     mainClass: String = "mesosphere.marathon.Main")(implicit
-  system: ActorSystem,
+    system: ActorSystem,
     mat: Materializer,
     ctx: ExecutionContext,
     scheduler: Scheduler) extends AutoCloseable with StrictLogging {
@@ -99,7 +101,6 @@ case class LocalMarathon(
     "min_revive_offers_interval" -> "100",
     "hostname" -> "localhost",
     "logging_level" -> "debug",
-    "minimum_viable_task_execution_duration" -> "0",
     "offer_matching_timeout" -> 10.seconds.toMillis.toString // see https://github.com/mesosphere/marathon/issues/4920
   ) ++ conf
 
@@ -112,7 +113,7 @@ case class LocalMarathon(
       }
   }(collection.breakOut)
 
-  private var marathon = Option.empty[Process]
+  @volatile private var marathon = Option.empty[Process]
 
   if (autoStart) {
     start()
@@ -133,23 +134,26 @@ case class LocalMarathon(
     Process(cmd, workDir, sys.env.toSeq: _*)
   }
 
-  private def create(): Process = {
-    processBuilder.run(ProcessOutputToLogStream(s"$suiteName-LocalMarathon-$httpPort"))
+  def create(): Process = {
+    marathon.getOrElse {
+      val process = processBuilder.run(ProcessOutputToLogStream(s"$suiteName-LocalMarathon-$httpPort"))
+      marathon = Some(process)
+      process
+    }
   }
 
   def start(): Future[Done] = {
-    if (marathon.isEmpty) {
-      marathon = Some(create())
-    }
+    create()
+
     val port = conf.get("http_port").orElse(conf.get("https_port")).map(_.toInt).getOrElse(httpPort)
-    val future = Retry(s"marathon-$port", maxAttempts = Int.MaxValue, minDelay = 1.milli, maxDelay = 5.seconds, maxDuration = 5.minutes) {
+    val future = Retry(s"Waiting for Marathon on $port", maxAttempts = Int.MaxValue, minDelay = 1.milli, maxDelay = 5.seconds, maxDuration = 4.minutes) {
       async {
         val result = await(Http().singleRequest(Get(s"http://localhost:$port/v2/leader")))
         result.discardEntityBytes() // forget about the body
         if (result.status.isSuccess()) { // linter:ignore //async/await
           Done
         } else {
-          throw new Exception("Marathon not ready yet.")
+          throw new Exception(s"Marathon on port=$port hasn't started yet. Giving up waiting..")
         }
       }
     }
@@ -168,20 +172,30 @@ case class LocalMarathon(
 
   def exitValue(): Option[Int] = marathon.map(_.exitValue())
 
-  def stop(): Unit = {
-    marathon.foreach(_.destroy())
-    marathon = Option.empty[Process]
-
-    val pids = activePids
-    if (pids.nonEmpty) {
-      Process(s"kill -9 ${pids.mkString(" ")}").!
+  def stop(): Future[Done] = {
+    marathon.fold(Future.successful(Done)){ p =>
+      p.destroy()
+      Timeout.blocking(30.seconds){ p.exitValue(); Done }
+        .recover {
+          case NonFatal(e) =>
+            logger.warn(s"Could not shutdown Marathon $suiteName in time", e)
+            val pids = activePids
+            if (pids.nonEmpty) {
+              Process(s"kill -9 ${pids.mkString(" ")}").!
+            }
+            Done
+        }
+    }.andThen {
+      case _ =>
+        marathon = Option.empty[Process]
     }
   }
 
   def restart(): Future[Done] = {
     logger.info(s"Restarting Marathon on $httpPort")
-    stop()
-    start().map { x =>
+    async {
+      await(stop())
+      val x = await(start())
       logger.info(s"Restarted Marathon on $httpPort")
       x
     }
@@ -260,6 +274,7 @@ trait HealthCheckEndpoint extends StrictLogging with ScalaFutures {
       }
     }
     val port = PortAllocator.ephemeralPort()
+    logger.info(s"Starting health check endpoint on port $port.")
     val server = Http().bindAndHandle(route, "0.0.0.0", port).futureValue
     logger.info(s"Listening for health events on $port")
     server
@@ -305,15 +320,14 @@ trait HealthCheckEndpoint extends StrictLogging with ScalaFutures {
 /**
   * Base trait for tests that need a marathon
   */
-trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutures with Eventually {
+trait MarathonTest extends HealthCheckEndpoint with ScalaFutures with Eventually {
+  protected def logger: Logger
   def marathonUrl: String
   def marathon: MarathonFacade
   def leadingMarathon: Future[LocalMarathon]
   def mesos: MesosFacade
   val testBasePath: PathId
   def suiteName: String
-
-  val appProxyIds = Lock(mutable.ListBuffer.empty[String])
 
   implicit val system: ActorSystem
   implicit val mat: Materializer
@@ -343,16 +357,6 @@ trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutu
 
   protected val events = new ConcurrentLinkedQueue[ITSSEEvent]()
 
-  protected[setup] def killAppProxies(): Unit = {
-    val PIDRE = """^\s*(\d+)\s+(.*)$""".r
-    val allJavaIds = Process("jps -lv").!!.split("\n")
-    val pids = allJavaIds.collect {
-      case PIDRE(pid, exec) if appProxyIds(_.exists(exec.contains)) => pid
-    }
-    if (pids.nonEmpty) {
-      Process(s"kill -9 ${pids.mkString(" ")}").run().exitValue()
-    }
-  }
   implicit class PathIdTestHelper(path: String) {
     def toRootTestPath: PathId = testBasePath.append(path).canonicalPath()
     def toTestPath: PathId = testBasePath.append(path)
@@ -420,7 +424,7 @@ trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutu
           image = "python:3.4.6-alpine"
         )),
         volumes = collection.immutable.Seq(
-          new AppDockerVolume(hostPath = s"$projectDir/src/test/python", containerPath = s"$containerDir/python", mode = ReadMode.Ro)
+          AppHostVolume(hostPath = s"$projectDir/src/test/python", containerPath = s"$containerDir/python", mode = ReadMode.Ro)
         )
       )),
       instances = instances,
@@ -453,7 +457,9 @@ trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutu
     //do not fail here, since the require statements will ensure a correct setup and fail otherwise
     Try(waitForDeployment(eventually(marathon.deleteGroup(testBasePath, force = true))))
 
-    WaitTestSupport.waitUntil("clean slate in Mesos", patienceConfig.timeout.toMillis.millis) {
+    val cleanUpPatienceConfig = WaitTestSupport.PatienceConfig(timeout = Span(1, Minutes), interval = Span(1, Seconds))
+
+    WaitTestSupport.waitUntil("clean slate in Mesos") {
       val occupiedAgents = mesos.state.value.agents.filter { agent => agent.usedResources.nonEmpty || agent.reservedResourcesByRole.nonEmpty }
       occupiedAgents.foreach { agent =>
         import mesosphere.marathon.integration.facades.MesosFormats._
@@ -462,7 +468,7 @@ trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutu
         logger.info(s"""Waiting for blank slate Mesos...\n "used_resources": "$usedResources"\n"reserved_resources": "$reservedResources"""")
       }
       occupiedAgents.isEmpty
-    }
+    }(cleanUpPatienceConfig)
 
     val apps = marathon.listAppsInBaseGroup
     require(apps.value.isEmpty, s"apps weren't empty: ${apps.entityPrettyJsonString}")
@@ -472,7 +478,6 @@ trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutu
     require(groups.value.isEmpty, s"groups weren't empty: ${groups.entityPrettyJsonString}")
     events.clear()
     healthChecks(_.clear())
-    killAppProxies()
 
     logger.info("... CLEAN UP finished <<<")
   }
@@ -654,7 +659,6 @@ trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutu
       mesos.teardown(frameworkId).futureValue
     }
     Try(healthEndpoint.unbind().futureValue)
-    Try(killAppProxies())
   }
 
   /**
@@ -707,7 +711,14 @@ trait MarathonTest extends HealthCheckEndpoint with StrictLogging with ScalaFutu
             if (!cancelled) {
               logger.info(s"SSEStream: Leader event stream was closed reason: ${result}")
               logger.info("Reconnecting")
-              scheduler.scheduleOnce(patienceConfig.interval) { iter() }
+              /* There is a small window between Jetty hanging up the event stream, and Jetty not accepting and
+               * responding to new requests. In the tests, under heavy load, retrying within 15 milliseconds is enough
+               * to hit this window.
+               *
+               * 10 times the interval would probably suffice. Timeout is way more time then we need. Half timeout seems
+               * like an okay compromise.
+               */
+              scheduler.scheduleOnce(patienceConfig.timeout / 2) { iter() }
             }
         }
     }
@@ -732,12 +743,14 @@ object MarathonTest extends StrictLogging {
   * Fixture that can be used for a single test case.
   */
 trait MarathonFixture extends AkkaUnitTestLike with MesosClusterTest with ZookeeperServerTest {
+  protected def logger: Logger
   def withMarathon[T](suiteName: String, marathonArgs: Map[String, String] = Map.empty)(f: (LocalMarathon, MarathonTest) => T): T = {
     val marathonServer = LocalMarathon(autoStart = false, suiteName = suiteName, masterUrl = mesosMasterUrl,
       zkUrl = s"zk://${zkServer.connectUri}/marathon-$suiteName", conf = marathonArgs)
     marathonServer.start().futureValue
 
     val marathonTest = new MarathonTest {
+      override protected val logger: Logger = MarathonFixture.this.logger
       override def marathonUrl: String = s"http://localhost:${marathonServer.httpPort}"
       override def marathon: MarathonFacade = marathonServer.client
       override def mesos: MesosFacade = MarathonFixture.this.mesos
@@ -757,6 +770,7 @@ trait MarathonFixture extends AkkaUnitTestLike with MesosClusterTest with Zookee
       f(marathonServer, marathonTest)
     } finally {
       sseStream.cancel()
+      if (marathonServer.isRunning()) marathonTest.cleanUp()
       marathonTest.teardown()
       marathonServer.stop()
     }
@@ -780,7 +794,7 @@ trait MarathonSuite extends Suite with StrictLogging with ScalaFutures with Befo
   * Base trait that starts a local marathon but doesn't have mesos/zookeeper yet
   */
 trait LocalMarathonTest extends MarathonTest with ScalaFutures
-    with AkkaUnitTestLike with MesosTest with ZookeeperServerTest {
+  with AkkaUnitTestLike with MesosTest with ZookeeperServerTest {
 
   def marathonArgs: Map[String, String] = Map.empty
 
@@ -821,9 +835,13 @@ trait LocalMarathonTest extends MarathonTest with ScalaFutures
   * trait that has marathon, zk, and a mesos ready to go
   */
 trait EmbeddedMarathonTest extends Suite with StrictLogging with ZookeeperServerTest with MesosClusterTest with LocalMarathonTest {
-  // disable failover timeout to assist with cleanup ops; terminated marathons are immediately removed from mesos's
-  // list of frameworks
-  override def marathonArgs: Map[String, String] = Map("failover_timeout" -> "0")
+  /* disable failover timeout to assist with cleanup ops; terminated marathons are immediately removed from mesos's
+   * list of frameworks
+   *
+   * Until https://issues.apache.org/jira/browse/MESOS-8171 is resolved, we cannot set this value to 0.
+   */
+
+  override def marathonArgs: Map[String, String] = Map("failover_timeout" -> "1")
 }
 
 /**
@@ -858,10 +876,6 @@ trait MarathonClusterTest extends Suite with StrictLogging with ZookeeperServerT
   override def afterAll(): Unit = {
     Try(additionalMarathons.foreach(_.close()))
     super.afterAll()
-  }
-
-  def nonLeader(leader: ITLeaderResult): MarathonFacade = {
-    marathonFacades.find(!_.url.contains(leader.port.toString)).get
   }
 
   override def cleanUp(): Unit = {
