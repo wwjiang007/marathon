@@ -9,12 +9,13 @@
 # ===========================
 config:
 
-  # We are repeating everything 3 times
-  repeat: 3
+  # We repeat the tests 10 times to have enough statistics for the
+  # statistical functions to have a correct meaning.
+  repeat: 10
 
 # Global definitions
 # ==================
 define:
 
   # The version specification we are using when writing the reponrts
-  versionspec: "{{meta:ref|date(%Y%m%d)}}-{{meta:version|safepath(meta:branch)|'unversioned'}}-{{meta:env}}-{{meta:test}}"
+  versionspec: "{{meta:ref|date(%Y%m%d%H%M)}}-{{meta:version|safepath(meta:branch)|'unversioned'}}-{{meta:env}}-{{meta:test}}"

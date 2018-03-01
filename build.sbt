@@ -1,7 +1,7 @@
 import java.time.{LocalDate, ZoneOffset}
 import java.time.format.DateTimeFormatter
 
-import com.amazonaws.auth.{AWSCredentialsProviderChain, EnvironmentVariableCredentialsProvider, InstanceProfileCredentialsProvider}
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
 import com.typesafe.sbt.SbtScalariform.ScalariformKeys
 import com.typesafe.sbt.packager.docker.Cmd
 import mesosphere.maven.MavenSettings.{loadM2Credentials, loadM2Resolvers}
@@ -11,8 +11,6 @@ import NativePackagerHelper.directory
 import scalariform.formatter.preferences._
 
 lazy val IntegrationTest = config("integration") extend Test
-
-def formattingTestArg(target: File) = Tests.Argument("-u", target.getAbsolutePath, "-eDFG")
 
 credentials ++= loadM2Credentials(streams.value.log)
 resolvers ++= loadM2Resolvers(sLog.value)
@@ -30,6 +28,8 @@ lazy val formatSettings = Seq(
     .setPreference(PreserveSpaceBeforeArguments, true)
 )
 
+// Pass arguments to Scalatest runner:
+// http://www.scalatest.org/user_guide/using_the_runner
 lazy val testSettings =
   inConfig(IntegrationTest)(Defaults.testTasks) ++
   Seq(
@@ -40,14 +40,17 @@ lazy val testSettings =
 
   parallelExecution in Test := true,
   testForkedParallel in Test := true,
-  testOptions in Test := Seq(formattingTestArg(target.value / "test-reports"),
-    Tests.Argument("-l", "mesosphere.marathon.IntegrationTest",
+  testOptions in Test := Seq(
+    Tests.Argument(
+      "-o", "-eDFG",
+      "-l", "mesosphere.marathon.IntegrationTest",
       "-y", "org.scalatest.WordSpec")),
   fork in Test := true,
 
   fork in IntegrationTest := true,
-  testOptions in IntegrationTest := Seq(formattingTestArg(target.value / "test-reports" / "integration"),
+  testOptions in IntegrationTest := Seq(
     Tests.Argument(
+      "-o", "-eDFG",
       "-n", "mesosphere.marathon.IntegrationTest",
       "-y", "org.scalatest.WordSpec")),
   parallelExecution in IntegrationTest := true,
@@ -88,7 +91,7 @@ lazy val commonSettings = testSettings ++
     "-Ywarn-nullary-override",
     "-Ywarn-nullary-unit",
     //"-Ywarn-unused", We should turn this one on soon
-    "-Ywarn-unused-import"
+    "-Ywarn-unused:-locals,imports",
     //"-Ywarn-value-discard", We should turn this one on soon.
   ),
   // Don't need any linting, etc for docs, so gain a small amount of build time there.
@@ -106,9 +109,7 @@ lazy val commonSettings = testSettings ++
     "Mesosphere Public Repo (S3)",
     s3("downloads.mesosphere.io/maven")
   )),
-  s3credentials := new AWSCredentialsProviderChain(
-    new EnvironmentVariableCredentialsProvider(),
-    InstanceProfileCredentialsProvider.getInstance()),
+  s3credentials := DefaultAWSCredentialsProviderChain.getInstance(),
   s3region :=  com.amazonaws.services.s3.model.Region.US_Standard,
 
   (scapegoatVersion in ThisBuild) := "1.3.0",
@@ -128,9 +129,6 @@ lazy val commonSettings = testSettings ++
   javacOptions in Compile += "-g",
   javaOptions in run ++= (aspectjWeaverOptions in Aspectj).value,
   javaOptions in Test ++= (aspectjWeaverOptions in Aspectj).value,
-  git.useGitDescribe := true,
-  // TODO: There appears to be a bug where uncommitted changes is true even if nothing is committed.
-  git.uncommittedSignifier := None
 )
 
 
@@ -150,43 +148,63 @@ lazy val packagingSettings = Seq(
   mappings in (Compile, packageDoc) := Seq(),
   debianChangelog in Debian := Some(baseDirectory.value / "changelog.md"),
 
+  (packageName in Universal) := {
+    import sys.process._
+    val shortCommit = ("./version commit" !!).trim
+    s"${packageName.value}-${version.value}-$shortCommit"
+  },
+
   /* Universal packaging (docs) - http://sbt-native-packager.readthedocs.io/en/latest/formats/universal.html
    */
   universalArchiveOptions in (UniversalDocs, packageZipTarball) := Seq("-pcvf"), // Remove this line once fix for https://github.com/sbt/sbt-native-packager/issues/1019 is released
-  (packageName in UniversalDocs) := { packageName.value + "-docs" + "-" + version.value },
+  (packageName in UniversalDocs) := {
+    import sys.process._
+    val shortCommit = ("./version commit" !!).trim
+    s"${packageName.value}-docs-${version.value}-$shortCommit"
+  },
   (topLevelDirectory in UniversalDocs) := { Some((packageName in UniversalDocs).value) },
   mappings in UniversalDocs ++= directory("docs/docs"),
 
 
   /* Docker config (http://sbt-native-packager.readthedocs.io/en/latest/formats/docker.html)
    */
-  dockerBaseImage := Dependency.V.OpenJDK,
+  dockerBaseImage := "debian:stretch-slim",
   dockerRepository := Some("mesosphere"),
   daemonUser in Docker := "root",
-  version in Docker := { "v" + (version in Compile).value },
-  dockerBaseImage := "debian:jessie-slim",
+  version in Docker := {
+    import sys.process._
+    ("./version docker" !!).trim
+  },
   (defaultLinuxInstallLocation in Docker) := "/marathon",
   dockerCommands := {
     // kind of a work-around; we want our mesos install and jdk install to come earlier so that Docker can cache them
     val (prefixCommands, restCommands) = dockerCommands.value.splitAt(2)
 
+    // Notes on the script below:
+    //
+    // 1) The `stretch-slim` does not contain `gnupg` and therefore `apt-key adv` will fail unless it's installed first
+    // 2) We are creating a dummy `systemctl` binary in order to satisfy mesos post-install script that tries to invoke
+    //   it for registering the systemd task.
+    //
     prefixCommands ++
       Seq(Cmd("RUN",
-        s"""apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv E56151BF && \\
+        s"""apt-get update && apt-get install -my wget gnupg && \\
+          |apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv E56151BF && \\
           |apt-get update -y && \\
           |apt-get upgrade -y && \\
-          |echo "deb http://ftp.debian.org/debian jessie-backports main" | tee -a /etc/apt/sources.list && \\
-          |echo "deb http://repos.mesosphere.com/debian jessie-testing main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \\
-          |echo "deb http://repos.mesosphere.com/debian jessie main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \\
+          |echo "deb http://ftp.debian.org/debian stretch-backports main" | tee -a /etc/apt/sources.list && \\
+          |echo "deb http://repos.mesosphere.com/debian stretch-testing main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \\
+          |echo "deb http://repos.mesosphere.com/debian stretch main" | tee -a /etc/apt/sources.list.d/mesosphere.list && \\
           |apt-get update && \\
-          |
           |# jdk setup
           |mkdir -p /usr/share/man/man1 && \\
-          |apt-get install -y openjdk-8-jdk-headless openjdk-8-jre-headless ca-certificates-java=20161107~bpo8+1 && \\
+          |apt-get install -y openjdk-8-jdk-headless openjdk-8-jre-headless ca-certificates-java=20170531+nmu1 && \\
           |/var/lib/dpkg/info/ca-certificates-java.postinst configure && \\
           |ln -svT "/usr/lib/jvm/java-8-openjdk-$$(dpkg --print-architecture)" /docker-java-home && \\
-          |
-          |apt-get install --no-install-recommends -y --force-yes mesos=${Dependency.V.MesosDebian} && \\
+          |# mesos setup
+          |echo exit 0 > /usr/bin/systemctl && chmod +x /usr/bin/systemctl && \\
+          |apt-get install --no-install-recommends -y mesos=${Dependency.V.MesosDebian} && \\
+          |rm /usr/bin/systemctl && \\
           |apt-get clean""".stripMargin)) ++
       restCommands ++
       Seq(
@@ -210,19 +228,11 @@ lazy val packagingSettings = Seq(
   rpmLicense := Some("Apache 2"),
   daemonStdoutLogFile := Some("marathon"),
   version in Rpm := {
-    // Matches e.g. 1.5.1
-    val releasePattern = """^(\d+)\.(\d+)\.(\d+)$""".r
-    // Matches e.g. 1.5.1-pre-42-gdeadbeef and 1.6.0-pre-42-gdeadbeef
-    val snapshotPattern = """^(\d+)\.(\d+)\.(\d+)(?:-SNAPSHOT|-pre)?-\d+-g(\w+)""".r
-    version.value match {
-      case releasePattern(major, minor, patch) => s"$major.$minor.$patch"
-      case snapshotPattern(major, minor, patch, commit) => s"$major.$minor.$patch${LocalDate.now(ZoneOffset.UTC).format(DateTimeFormatter.BASIC_ISO_DATE)}git$commit"
-      case v =>
-
-        System.err.println(s"Version '$v' is not fully supported, please update the git tags.")
-        v
-    }
+    import sys.process._
+    val shortCommit = ("./version commit" !!).trim
+    s"${version.value}.$shortCommit"
   },
+  rpmRelease in Rpm := "1",
 
   packageDebianForLoader := {
     val debianFile = (packageBin in Debian).value
@@ -266,6 +276,10 @@ lazy val `plugin-interface` = (project in file("plugin-interface"))
     .settings(commonSettings : _*)
     .settings(formatSettings : _*)
     .settings(
+      version := {
+        import sys.process._
+        ("./version" !!).trim
+      },
       name := "plugin-interface",
       libraryDependencies ++= Dependencies.pluginInterface
     )
@@ -279,6 +293,10 @@ lazy val marathon = (project in file("."))
   .settings(formatSettings: _*)
   .settings(packagingSettings: _*)
   .settings(
+    version := {
+      import sys.process._
+      ("./version" !!).trim
+    },
     unmanagedResourceDirectories in Compile += file("docs/docs/rest-api"),
     libraryDependencies ++= Dependencies.marathon,
     sourceGenerators in Compile += (ramlGenerate in Compile).taskValue,

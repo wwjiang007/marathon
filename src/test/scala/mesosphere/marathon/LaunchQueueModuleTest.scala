@@ -2,7 +2,6 @@ package mesosphere.marathon
 
 import java.time.Clock
 
-import com.google.inject.Provider
 import mesosphere.AkkaUnitTest
 import mesosphere.marathon.core.instance.TestInstanceBuilder
 import mesosphere.marathon.core.instance.TestInstanceBuilder._
@@ -231,7 +230,7 @@ class LaunchQueueModuleTest extends AkkaUnitTest with OfferMatcherSpec {
       reset(instanceTracker, instanceOpFactory)
 
       When("we send a related task change")
-      val notificationAck = launchQueue.notifyOfInstanceUpdate(instanceChange)
+      launchQueue.notifyOfInstanceUpdate(instanceChange).futureValue
 
       Then("there should be no more interactions")
       f.verifyNoMoreInteractions()

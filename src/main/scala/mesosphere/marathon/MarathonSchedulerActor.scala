@@ -161,10 +161,8 @@ class MarathonSchedulerActor private (
       }
 
     case cmd @ CancelDeployment(plan) =>
-      deploymentManager.cancel(plan).onComplete{
-        case Success(d) => self ! cmd.answer
-        case Failure(e) => logger.error(s"Failed to cancel a deployment ${plan.id} due to: ", e)
-      }
+      // The deployment manager will respond via the plan future/promise
+      deploymentManager.cancel(plan)
 
     case cmd @ Deploy(plan, force) =>
       deploy(sender(), cmd)
@@ -289,7 +287,7 @@ class MarathonSchedulerActor private (
     logger.error(s"Deployment ${plan.id}:${plan.version} of ${plan.targetIdsString} failed", reason)
     Future.sequence(plan.affectedRunSpecIds.map(launchQueue.asyncPurge))
       .recover { case NonFatal(error) => logger.warn(s"Error during async purge: planId=${plan.id} for ${plan.targetIdsString}", error); Done }
-      .foreach { _ => eventBus.publish(core.event.DeploymentFailed(plan.id, plan)) }
+      .foreach { _ => eventBus.publish(core.event.DeploymentFailed(plan.id, plan, reason = Some(reason.getMessage()))) }
   }
 }
 

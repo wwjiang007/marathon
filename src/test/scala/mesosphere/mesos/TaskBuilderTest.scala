@@ -983,7 +983,35 @@ class TaskBuilderTest extends UnitTest {
       val cmd = taskInfo.getExecutor.getCommand
 
       assert(!taskInfo.hasCommand)
+      assert(taskInfo.getExecutor.getResourcesList.isEmpty)
       assert(cmd.getValue == "chmod ug+rx '/custom/executor' && exec '/custom/executor' a b c")
+    }
+
+    "BuildIfMatchesWithExecutorResources" in {
+      val offer = MarathonTestHelper.makeBasicOffer(cpus = 1.0, mem = 128.0, disk = 2000.0, beginPort = 31000, endPort = 32000).build
+
+      val task: Option[(MesosProtos.TaskInfo, _)] = buildIfMatches(
+        offer,
+        AppDefinition(
+          id = "/testApp".toPath,
+          resources = Resources(cpus = 1.0, mem = 64.0, disk = 1.0),
+          args = Seq("a", "b", "c"),
+          portDefinitions = PortDefinitions(8080, 8081),
+          executor = "/custom/executor",
+          executorResources = Some(Resources(cpus = 0.1, mem = 32.0, disk = 10))
+        )
+      )
+
+      assert(task.isDefined)
+
+      val (taskInfo: TaskInfo, _) = task.get
+
+      assert(taskInfo.hasExecutor)
+      assert(taskInfo.getExecutor.getResourcesList == Seq(
+        ScalarResource.cpus(0.1),
+        ScalarResource.memory(32.0),
+        ScalarResource.disk(10.0)
+      ).map(resourceToProto).asJava)
     }
 
     "BuildIfMatchesWithRole" in {
@@ -1628,6 +1656,37 @@ class TaskBuilderTest extends UnitTest {
       assert("1001" == env("PORT_8081"))
       assert("1000" == env("PORT_HTTP"))
       assert("1001" == env("PORT_JABBER"))
+    }
+
+    "PortsEnvWithOnlyMappingsAndUserNetworking" in {
+      val command =
+        TaskBuilder.commandInfo(
+          runSpec = AppDefinition(
+            id = runSpecId,
+            networks = Seq(ContainerNetwork("dcos")), container = Some(Docker(
+
+              portMappings = Seq(
+                PortMapping(containerPort = 8080, hostPort = None, servicePort = 9000, protocol = "tcp", name = Some("http")),
+                PortMapping(containerPort = 0, hostPort = None, servicePort = 9001, protocol = "tcp", name = Some("jabber"))
+              )
+            ))
+          ),
+          taskId = Some(Task.Id("task-123")),
+          host = Some("host.mega.corp"),
+          hostPorts = Seq(None, None),
+          envPrefix = None
+        )
+
+      val env: Map[String, String] =
+        command.getEnvironment.getVariablesList.toList.map(v => v.getName -> v.getValue).toMap
+
+      assert("8080" == env("PORT_8080"))
+      assert("8080" == env("PORT_HTTP"))
+
+      val port1 = env("PORT1")
+      assert(port1.toInt > 0)
+      assert(port1 == env(s"PORT_${port1}"))
+      assert(port1 == env("PORT_JABBER"))
     }
 
     "PortsEnvWithBothPortsAndMappings" in {

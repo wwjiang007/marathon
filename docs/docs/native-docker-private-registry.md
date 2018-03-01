@@ -4,7 +4,7 @@ title: Using a Private Docker Registry
 
 # Using a Private Docker Registry
 
-As of Marathon 1.5, you can upload your private Docker registry credentials to a secret store, then reference them in your app or pod definition. This functionality is only available if you are using the Mesos containerizer. If you are using the Docker containerizer, follow [these instructions](#docker-containerizer) to use a private Docker registry.
+As of Marathon 1.5, you can upload your private Docker registry credentials to a secret store, then reference them in your app or pod definition. This functionality is only available if you are using the Mesos containerizer. If you are using the Docker containerizer, follow [these instructions](#docker-containerizer) to use a private Docker registry. If you want to learn how to configure credentials to pull images from the Amazon Elastic Container Registry (AWS ECR) please refer to [this blog post](https://aws.amazon.com/blogs/apn/automating-ecr-authentication-on-marathon-with-the-amazon-ecr-credential-helper/).
 
 ## Step 1: Create a Credentials File
 
@@ -202,11 +202,9 @@ the `uris` field of your app. The `docker.tar.gz` file should include the `.dock
     $ cp docker.tar.gz /etc/
     ```
 
-      <div class="alert alert-info">
-        <strong>Note:</strong>
-       The URI must be accessible by all nodes that will start your application. You can distribute the file to the local filesystem of all nodes, for example via RSYNC/SCP, or store it on a shared network drive like [Amazon S3](http://aws.amazon.com/s3/). Consider the security implications of your chosen approach carefully.
-      </div>
-
+     <strong>Note:</strong>
+     The URI must be accessible by all nodes that will start your application.
+     You can distribute the file to the local filesystem of all nodes, for example via RSYNC/SCP, or store it on a shared network drive like [Google Cloud Storage](https://cloud.google.com/storage/) or [Amazon S3](https://aws.amazon.com/s3/). Consider the security implications of your chosen approach carefully.
 
 #### Step 2:  Add URI path to app definition
 

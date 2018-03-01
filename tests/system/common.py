@@ -244,8 +244,9 @@ def block_iptable_rules_for_seconds(host, port_number, sleep_seconds, block_inpu
 
 def iptables_block_string(block_input, block_output, port):
     """ Produces a string of iptables blocking command that can be executed on an agent. """
-    str = "sudo iptables -I INPUT -p tcp --dport {} -j DROP;".format(port) if block_input else ""
-    return str + "sudo iptables -I OUTPUT -p tcp --dport {} -j DROP;".format(port) if block_output else ""
+    block_input_str = "sudo iptables -I INPUT -p tcp --dport {} -j DROP;".format(port) if block_input else ""
+    block_output_str = "sudo iptables -I OUTPUT -p tcp --dport {} -j DROP;".format(port) if block_output else ""
+    return block_input_str + block_output_str
 
 
 def wait_for_task(service, task, timeout_sec=120):
@@ -337,14 +338,13 @@ def assert_app_tasks_healthy(client, app_def):
 def get_marathon_leader_not_on_master_leader_node():
     marathon_leader = shakedown.marathon_leader_ip()
     master_leader = shakedown.master_leader_ip()
-    print('marathon: {}'.format(marathon_leader))
-    print('leader: {}'.format(master_leader))
+    print('marathon leader: {}'.format(marathon_leader))
+    print('mesos leader: {}'.format(master_leader))
 
     if marathon_leader == master_leader:
         delete_marathon_path('v2/leader')
         shakedown.wait_for_service_endpoint('marathon', timedelta(minutes=5).total_seconds())
-        marathon_leadership_changed(marathon_leader)
-        marathon_leader = shakedown.marathon_leader_ip()
+        marathon_leader = assert_marathon_leadership_changed(marathon_leader)
         print('switched leader to: {}'.format(marathon_leader))
 
     return marathon_leader
@@ -364,8 +364,8 @@ def install_enterprise_cli_package():
        command to create secrets, manage service accounts etc.
     """
     print('Installing dcos-enterprise-cli package')
-    stdout, stderr, return_code = shakedown.run_dcos_command('package install dcos-enterprise-cli --cli --yes')
-    assert return_code == 0, "Failed to install dcos-enterprise-cli package"
+    cmd = 'package install dcos-enterprise-cli --cli --yes'
+    stdout, stderr, return_code = shakedown.run_dcos_command(cmd, raise_on_error=True)
 
 
 def is_enterprise_cli_package_installed():
@@ -726,8 +726,10 @@ def __marathon_leadership_changed_in_mesosDNS(original_leader):
         We have to retry because mesosDNS checks for changes only every 30s.
     """
     current_leader = shakedown.marathon_leader_ip()
-    print('leader according to MesosDNS: {}'.format(current_leader))
-    assert original_leader != current_leader
+    print(f'leader according to MesosDNS: {current_leader}, original leader: {original_leader}') # NOQA E999
+    error = f'Current leader did not change: original={original_leader}, current={current_leader}' # NOQA E999
+    assert original_leader != current_leader, error
+    return current_leader
 
 
 @retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=30000, retry_on_exception=ignore_exception)
@@ -736,16 +738,21 @@ def __marathon_leadership_changed_in_marathon_api(original_leader):
         We have to retry here because leader election takes time and what might happen is that some nodes might
         not be aware of the new leader being elected resulting in HTTP 502.
     """
-    current_leader = marathon.create_client().get_leader()
+    # Leader is returned like this 10.0.6.88:8080 - we want just the IP
+    current_leader = marathon.create_client().get_leader().split(':', 1)[0]
     print('leader according to marathon API: {}'.format(current_leader))
     assert original_leader != current_leader
+    return current_leader
 
 
-def marathon_leadership_changed(original_leader):
+def assert_marathon_leadership_changed(original_leader):
     """ Verifies leadership changed both by reading v2/leader as well as mesosDNS.
     """
-    __marathon_leadership_changed_in_marathon_api(original_leader)
-    __marathon_leadership_changed_in_mesosDNS(original_leader)
+    new_leader_marathon = __marathon_leadership_changed_in_marathon_api(original_leader)
+    new_leader_dns = __marathon_leadership_changed_in_mesosDNS(original_leader)
+    assert new_leader_marathon == new_leader_dns, "Different leader IPs returned by Marathon ({}) and MesosDNS ({})."\
+        .format(new_leader_marathon, new_leader_dns)
+    return new_leader_dns
 
 
 def running_status_network_info(task_statuses):
@@ -783,3 +790,21 @@ async def find_event(event_type, event_stream):
 
 async def assert_event(event_type, event_stream, within=10):
     await asyncio.wait_for(find_event(event_type, event_stream), within)
+
+
+def kill_process_on_host(hostname, pattern):
+    """ Kill the process matching pattern at ip
+
+        :param hostname: the hostname or ip address of the host on which the process will be killed
+        :param pattern: a regular expression matching the name of the process to kill
+        :return: IDs of processes that got either killed or terminated on their own
+    """
+
+    cmd = "ps aux | grep -v grep | grep '{}' | awk '{{ print $2 }}' | tee >(xargs sudo kill -9)".format(pattern)
+    status, stdout = shakedown.run_command_on_agent(hostname, cmd)
+    pids = [p.strip() for p in stdout.splitlines()]
+    if pids:
+        print("Killed pids: {}".format(", ".join(pids)))
+    else:
+        print("Killed no pids")
+    return pids

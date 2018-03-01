@@ -14,7 +14,7 @@ import mesosphere.marathon.core.plugin.PluginManager
 import mesosphere.marathon.core.pod.{ HostNetwork, Network }
 import mesosphere.marathon.core.readiness.ReadinessCheck
 import mesosphere.marathon.plugin.validation.RunSpecValidator
-import mesosphere.marathon.raml.{ App, Apps, Resources }
+import mesosphere.marathon.raml.{ App, Apps, ExecutorResources, Resources }
 import mesosphere.marathon.state.Container.{ Docker, MesosAppC, MesosDocker }
 import mesosphere.marathon.state.VersionInfo._
 import mesosphere.marathon.stream.Implicits._
@@ -41,6 +41,8 @@ case class AppDefinition(
     resources: Resources = Apps.DefaultResources,
 
     executor: String = App.DefaultExecutor,
+
+    executorResources: Option[Resources] = AppDefinition.DefaultExecutorResources,
 
     constraints: Set[Constraint] = AppDefinition.DefaultConstraints,
 
@@ -180,6 +182,12 @@ case class AppDefinition(
       .setUnreachableStrategy(unreachableStrategy.toProto)
       .setKillSelection(killSelection.toProto)
 
+    executorResources.foreach(r => {
+      builder.addExecutorResources(ScalarResource(Resource.CPUS, r.cpus))
+      builder.addExecutorResources(ScalarResource(Resource.MEM, r.mem))
+      builder.addExecutorResources(ScalarResource(Resource.DISK, r.disk))
+    })
+
     tty.filter(tty => tty).foreach(builder.setTty(_))
     networks.foreach { network => builder.addNetworks(Network.toProto(network)) }
     container.foreach { c => builder.setContainer(ContainerSerializer.toProto(c)) }
@@ -219,6 +227,11 @@ case class AppDefinition(
         r => r.getName -> (r.getScalar.getValue: Double)
       }(collection.breakOut)
 
+    val executorResourcesMap: Map[String, Double] =
+      proto.getExecutorResourcesList.map {
+        r => r.getName -> (r.getScalar.getValue: Double)
+      }(collection.breakOut)
+
     val argsOption = proto.getCmd.getArgumentsList.toSeq
 
     //Precondition: either args or command is defined
@@ -249,12 +262,24 @@ case class AppDefinition(
       else
         UnreachableStrategy.default(isResident)
 
+    val executorRes: Option[Resources] = if (this.executorResources.isEmpty && executorResourcesMap.isEmpty)
+      None
+    else {
+      val r = this.executorResources.getOrElse(AppDefinition.MinimalExecutorResources)
+      Some(Resources(
+        cpus = executorResourcesMap.getOrElse(Resource.CPUS, r.cpus),
+        mem = executorResourcesMap.getOrElse(Resource.MEM, r.mem),
+        disk = executorResourcesMap.getOrElse(Resource.DISK, r.disk)
+      ))
+    }
+
     AppDefinition(
       id = PathId(proto.getId),
       user = if (proto.getCmd.hasUser) Some(proto.getCmd.getUser) else None,
       cmd = commandOption,
       args = argsOption,
       executor = proto.getExecutor,
+      executorResources = executorRes,
       instances = proto.getInstances,
       portDefinitions = portDefinitions,
       requirePorts = proto.getRequirePorts,
@@ -413,6 +438,10 @@ object AppDefinition extends GeneralPurposeCombinators {
 
   val DefaultIsResident = false
 
+  val DefaultExecutorResources: Option[Resources] = None
+
+  val MinimalExecutorResources: Resources = ExecutorResources.Default.fromRaml
+
   /**
     * This default is only used in tests
     */
@@ -453,23 +482,10 @@ object AppDefinition extends GeneralPurposeCombinators {
       app.dependencies is every(PathId.pathIdValidator)
     } and validBasicAppDefinition(enabledFeatures) and pluginValidators
 
-  /**
-    * Validator for apps, which are being part of a group.
-    *
-    * @param base Path of the parent group.
-    * @return
-    */
-  def validNestedAppDefinition(base: PathId, enabledFeatures: Set[String]): Validator[AppDefinition] =
-    validator[AppDefinition] { app =>
-      app.id is PathId.validPathWithBase(base)
-    } and validBasicAppDefinition(enabledFeatures)
-
   private def pluginValidators(implicit pluginManager: PluginManager): Validator[AppDefinition] =
-    new Validator[AppDefinition] {
-      override def apply(app: AppDefinition): Result = {
-        val plugins = pluginManager.plugins[RunSpecValidator]
-        new And(plugins: _*).apply(app)
-      }
+    (app: AppDefinition) => {
+      val plugins = pluginManager.plugins[RunSpecValidator]
+      new And(plugins: _*).apply(app)
     }
 
   private val containsCmdArgsOrContainer: Validator[AppDefinition] =
@@ -543,7 +559,7 @@ object AppDefinition extends GeneralPurposeCombinators {
         true
     }
 
-  private def validBasicAppDefinition(enabledFeatures: Set[String]) = validator[AppDefinition] { appDef =>
+  def validBasicAppDefinition(enabledFeatures: Set[String]) = validator[AppDefinition] { appDef =>
     appDef.upgradeStrategy is valid
     appDef.container is optional(Container.validContainer(appDef.networks, enabledFeatures))
     appDef.portDefinitions is PortDefinitions.portDefinitionsValidator
@@ -561,7 +577,7 @@ object AppDefinition extends GeneralPurposeCombinators {
     appDef.secrets is valid(Secret.secretsValidator)
     appDef.secrets is empty or featureEnabled(enabledFeatures, Features.SECRETS)
     appDef.env is valid(EnvVarValue.envValidator)
-    appDef.acceptedResourceRoles is empty or valid(ResourceRole.validAcceptedResourceRoles(appDef.isResident))
+    appDef.acceptedResourceRoles is empty or valid(ResourceRole.validAcceptedResourceRoles("app", appDef.isResident))
     appDef must complyWithGpuRules(enabledFeatures)
     appDef must complyWithMigrationAPI
     appDef must complyWithReadinessCheckRules

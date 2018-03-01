@@ -18,8 +18,12 @@ import scala.collection.immutable.Seq
 sealed trait MarathonEvent {
   val eventType: String
   val timestamp: String
+
   @JsonIgnore
-  lazy val jsonString: String = Json.stringify(eventToJson(this))
+  lazy val fullJsonString: String = Json.stringify(eventToJson(this, false))
+
+  @JsonIgnore
+  lazy val lightJsonString: String = Json.stringify(eventToJson(this, true))
 }
 
 // api
@@ -183,7 +187,8 @@ case class DeploymentFailed(
     id: String,
     plan: DeploymentPlan,
     eventType: String = "deployment_failed",
-    timestamp: String = Timestamp.now().toString) extends UpgradeEvent
+    timestamp: String = Timestamp.now().toString,
+    reason: Option[String] = None) extends UpgradeEvent
 
 case class DeploymentStatus(
     plan: DeploymentPlan,

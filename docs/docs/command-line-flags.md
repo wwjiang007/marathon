@@ -16,7 +16,13 @@ These flags control the core functionality of the Marathon server.
 
 ### Note - Command Line Flags May Be Specified Using Environment Variables
 
-The core functionality flags can be also set by environment variable `MARATHON_OPTION_NAME` (the option name with a `MARATHON_` prefix added to it), for example `MARATHON_MASTER` for `--master` option.  Please note that command line options precede environment variables.  This means that if the `MARATHON_MASTER` environment variable is set and `--master` is supplied on the command line, then the environment variable is ignored.
+The core functionality flags can be also set by environment variable `MARATHON_CMD_OPTION_NAME` (the option name with a `MARATHON_CMD_` prefix added to it), for example `MARATHON_CMD_MASTER` for `--master` option.  Please note that command line options precede environment variables.  This means that if the `MARATHON_CMD_MASTER` environment variable is set and `--master` is supplied on the command line, then the environment variable is ignored. 
+
+For versions of Marathon prior to 1.4 the prefix for option name was just `MARATHON_`. In newer versions that is not supported anymore.
+
+For boolean values you should set the environment variable with empty value. For example, use `MARATHON_HA=` to enable --ha or `MARATHON_DISABLE_HA=` for `--disable_ha`.
+
+When using Debian packages, these environment variables should be defined in `/etc/default/marathon` file.
 
 ### Required Flags
 
@@ -98,7 +104,7 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     in milliseconds, between application scaling operations.
 * `--task_launch_timeout` (Optional. Default: 300000 (5 minutes)):
     Time, in milliseconds, to wait for a task to enter the `TASK_RUNNING` state
-    before killing it.
+    before killing it. See also `--task_launch_confirm_timeout`.
 * `--zk` (Optional. Default: `zk://localhost:2181/marathon`): ZooKeeper URL for storing state.
     Format: `zk://host1:port1,host2:port2,.../path`
     - <span class="label label-default">v1.1.2</span> Format: `zk://user@pass:host1:port1,user@pass:host2:port2,.../path`.
@@ -217,7 +223,7 @@ incoming resource offer, i.e. finding suitable tasks to launch for incoming offe
 All launched tasks are stored before launching them. There is also a timeout for this:
 
 * <span class="label label-default">v0.11.0</span> `--task_launch_confirm_timeout` (Optional. Default: 300000 (5 minutes)):
-  Time, in milliseconds, to wait for a task to enter the `TASK_STAGING` state before killing it.
+  Time, in milliseconds, to wait for a task to enter the `TASK_STAGING` state before killing it. Also see `--task_launch_timeout`.
 
 When the task launch requests in Marathon change because an app definition changes or a backoff delay is overdue,
 Marathon can request all available offers from Mesos again -- even those that it has recently rejected. To avoid
@@ -311,6 +317,8 @@ The Web Site flags control the behavior of Marathon's web site, including the us
 * `--leader_proxy_ssl_ignore_hostname` (Optional. Default: false): Do not
     verify that the hostname of the Marathon leader matches the one in the SSL
     certificate when proxying API requests to the current leader.
+* `--[disable_]http_compression` (Optional. Default: enabled): Specifies whether Marathon should compress HTTP responses
+    for clients that support it. Disabling will reduce the CPU burden on Marathon to service API requests.
 *  <span class="label label-default">v0.10.0</span> `--http_max_concurrent_requests` (Optional.): the maximum number of
     concurrent HTTP requests, that is allowed concurrently before requests get answered directly with a
     HTTP 503 Service Temporarily Unavailable.
@@ -322,8 +330,8 @@ The Web Site flags control the behavior of Marathon's web site, including the us
     Enabling this might noticeably degrade performance but it helps finding performance problems.
     These measurements can be disabled with --disable_metrics. Other metrics are not affected.
 * <span class="label label-default">v0.13.0</span> `--reporter_graphite` (Optional. Default: disabled):
-    Report metrics to [Graphite](http://graphite.wikidot.com) as defined by the given URL.
-    Example: `tcp://localhost:2003?prefix=marathon-test&interval=10`
+    Report metrics to [Graphite](http://graphite.wikidot.com) (StatsD) as defined by the given URL.
+    Example: `udp://localhost:2003?prefix=marathon-test&interval=10`
     The URL can have several parameters to refine the functionality.
     * prefix: (Default: None) the prefix for all metrics
     * interval: (Default: 10) the interval to report to graphite in seconds

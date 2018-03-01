@@ -79,7 +79,8 @@ trait AppConversion extends DefaultConversions with ConstraintConversion with En
       versionInfo = app.versionInfo.toRaml,
       unreachableStrategy = Some(app.unreachableStrategy.toRaml),
       killSelection = app.killSelection.toRaml,
-      tty = app.tty
+      tty = app.tty,
+      executorResources = app.executorResources.toRaml
     )
   }
 
@@ -162,7 +163,8 @@ trait AppConversion extends DefaultConversions with ConstraintConversion with En
       secrets = Raml.fromRaml(app.secrets),
       unreachableStrategy = app.unreachableStrategy.map(_.fromRaml).getOrElse(AppDefinition.DefaultUnreachableStrategy),
       killSelection = app.killSelection.fromRaml,
-      tty = app.tty
+      tty = app.tty,
+      executorResources = app.executorResources.map(_.fromRaml)
     )
     result
   }
@@ -210,7 +212,8 @@ trait AppConversion extends DefaultConversions with ConstraintConversion with En
       taskKillGracePeriodSeconds = update.taskKillGracePeriodSeconds.orElse(app.taskKillGracePeriodSeconds),
       unreachableStrategy = update.unreachableStrategy.orElse(app.unreachableStrategy),
       killSelection = update.killSelection.getOrElse(app.killSelection),
-      tty = update.tty.orElse(app.tty)
+      tty = update.tty.orElse(app.tty),
+      executorResources = update.executorResources
     )
   }
 
@@ -323,7 +326,7 @@ trait AppConversion extends DefaultConversions with ConstraintConversion with En
       args = if (service.hasCmd && service.getCmd.getArgumentsCount > 0) service.getCmd.getArgumentsList.to[Seq] else App.DefaultArgs,
       backoffFactor = service.whenOrElse(_.hasBackoffFactor, _.getBackoffFactor, App.DefaultBackoffFactor),
       backoffSeconds = service.whenOrElse(_.hasBackoff, b => (b.getBackoff / 1000L).toInt, App.DefaultBackoffSeconds),
-      cmd = if (service.hasCmd && service.getCmd.hasValue) Option(service.getCmd.getValue) else App.DefaultCmd,
+      cmd = if (service.hasCmd && service.getCmd.getArgumentsCount == 0 && service.getCmd.hasValue) Option(service.getCmd.getValue) else App.DefaultCmd,
       constraints = service.whenOrElse(_.getConstraintsCount > 0, _.getConstraintsList.map(_.toRaml[Seq[String]])(collection.breakOut), App.DefaultConstraints),
       container = service.when(_.hasContainer, _.getContainer.toRaml).orElse(App.DefaultContainer),
       cpus = resourcesMap.getOrElse(Resource.CPUS, App.DefaultCpus),

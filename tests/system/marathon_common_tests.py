@@ -223,7 +223,7 @@ def test_task_failure_recovers():
     old_task_id = tasks[0]['id']
     host = tasks[0]['host']
 
-    shakedown.kill_process_on_host(host, '[s]leep 1000')
+    common.kill_process_on_host(host, '[s]leep 1000')
     shakedown.deployment_wait()
 
     @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
@@ -269,8 +269,8 @@ def test_run_app_with_non_existing_user():
     def check_failure_message():
         app = client.get_app(app_def["id"])
         message = app['lastTaskFailure']['message']
-        error = "Failed to get user information for 'bad'"
-        assert error in message, "Launched an app with a non-existing user: {}".format(app['user'])
+        error = "No such user 'bad'"
+        assert error in message, f"Did not receive expected error messsage \"{error}\" but \"{message}\"" # noqa E999
 
     check_failure_message()
 
@@ -623,7 +623,7 @@ def test_pinned_task_recovers_on_host():
     shakedown.deployment_wait()
     tasks = client.get_tasks(app_def["id"])
 
-    shakedown.kill_process_on_host(host, '[s]leep')
+    common.kill_process_on_host(host, '[s]leep')
     shakedown.deployment_wait()
 
     @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
@@ -700,21 +700,26 @@ def test_restart_container_with_persistent_volume():
     client = marathon.create_client()
     client.add_app(app_def)
 
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=app_id)
 
     tasks = client.get_tasks(app_id)
     assert len(tasks) == 1, "The number of tasks is {} after deployment, but 1 was expected".format(len(tasks))
 
-    port = tasks[0]['ports'][0]
     host = tasks[0]['host']
+    port = tasks[0]['ports'][0]
     cmd = "curl {}:{}/data/foo".format(host, port)
-    run, data = shakedown.run_command_on_master(cmd)
 
-    assert run, "{} did not succeed".format(cmd)
-    assert data == 'hello\n', "'{}' was not equal to hello\\n".format(data)
+    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
+    def check_task(cmd, target_data):
+        run, data = shakedown.run_command_on_master(cmd)
+
+        assert run, "{} did not succeed".format(cmd)
+        assert data == target_data, "'{}' was not equal to {}".format(data, target_data)
+
+    check_task(cmd, target_data='hello\n')
 
     client.restart_app(app_id)
-    shakedown.deployment_wait()
+    common.deployment_wait(service_id=app_id)
 
     @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
     def check_task_recovery():
@@ -723,13 +728,66 @@ def test_restart_container_with_persistent_volume():
 
     check_task_recovery()
 
+    host = tasks[0]['host']
+    port = tasks[0]['ports'][0]
+    cmd = "curl {}:{}/data/foo".format(host, port)
+
+    check_task(cmd, target_data='hello\nhello\n')
+
+
+@shakedown.dcos_1_8
+def test_app_with_persistent_volume_recovers():
+    """Tests that when an app task with a persistent volume gets killed,
+       it recovers on the node it was launched on, and it gets attached
+       to the same persistent-volume."""
+
+    app_def = apps.persistent_volume_app()
+    app_id = app_def['id']
+
+    client = marathon.create_client()
+    client.add_app(app_def)
+
+    common.deployment_wait(service_id=app_id)
+
+    tasks = client.get_tasks(app_id)
+    assert len(tasks) == 1, "The number of tasks is {} after deployment, but 1 was expected".format(len(tasks))
+
+    task_id = tasks[0]['id']
     port = tasks[0]['ports'][0]
     host = tasks[0]['host']
     cmd = "curl {}:{}/data/foo".format(host, port)
-    run, data = shakedown.run_command_on_master(cmd)
 
-    assert run, "{} did not succeed".format(cmd)
-    assert data == 'hello\nhello\n', "'{}' was not equal to hello\\nhello\\n".format(data)
+    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
+    def check_task(cmd, target_data):
+        run, data = shakedown.run_command_on_master(cmd)
+
+        assert run, "{} did not succeed".format(cmd)
+        assert target_data in data, "'{}' not found in {}".format(target_data, data)
+
+    check_task(cmd, target_data='hello\n')
+
+    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
+    def kill_task(host, pattern):
+        pids = common.kill_process_on_host(host, pattern)
+        assert len(pids) != 0, "no task got killed on {} for pattern {}".format(host, pattern)
+
+    kill_task(host, '[h]ttp\\.server')
+
+    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
+    def check_task_recovery():
+        tasks = client.get_tasks(app_id)
+        assert len(tasks) == 1, "The number of tasks is {} after recovery, but 1 was expected".format(len(tasks))
+
+        new_task_id = tasks[0]['id']
+        assert task_id != new_task_id, "The task ID has not changed, and is still {}".format(task_id)
+
+    check_task_recovery()
+
+    port = tasks[0]['ports'][0]
+    host = tasks[0]['host']
+    cmd = "curl {}:{}/data/foo".format(host, port)
+
+    check_task(cmd, target_data='hello\nhello\n')
 
 
 def test_app_update():
@@ -1007,6 +1065,31 @@ def test_metric_endpoint(marathon_service_name):
         "service.mesosphere.marathon.app.count is absent"
 
 
+def test_healtchcheck_and_volume():
+    """Launches a Docker container on Marathon."""
+
+    app_def = apps.healthcheck_and_volume()
+    app_id = app_def["id"]
+
+    client = marathon.create_client()
+    client.add_app(app_def)
+    shakedown.deployment_wait(app_id=app_id)
+
+    tasks = client.get_tasks(app_id)
+    app = client.get_app(app_id)
+
+    assert len(tasks) == 1, "The number of tasks is {} after deployment, but only 1 was expected".format(len(tasks))
+    assert len(app['container']['volumes']) == 2, "The container does not have the correct amount of volumes"
+
+    # check if app becomes healthy
+    @retrying.retry(wait_fixed=1000, stop_max_attempt_number=30, retry_on_exception=common.ignore_exception)
+    def check_health():
+        app = client.get_app(app_id)
+        assert app['tasksHealthy'] == 1, "The app is not healthy"
+
+    check_health()
+
+
 @shakedown.dcos_1_9
 def test_vip_mesos_cmd(marathon_service_name):
     """Validates the creation of an app with a VIP label and the accessibility of the service via the VIP."""
@@ -1133,3 +1216,24 @@ def test_network_pinger(test_type, get_pinger_app, dns_format, marathon_service_
         assert 'Relay from {}'.format(relay_app["id"]) in output
 
     http_output_check()
+
+
+@shakedown.dcos_1_11
+def test_ipv6_healthcheck(docker_ipv6_network_fixture):
+    """ There is new feature in DC/OS 1.11 that allows containers running on IPv6 network to be healthchecked from
+        Marathon. This tests verifies executing such healthcheck.
+    """
+    app_def = apps.ipv6_healthcheck()
+    client = marathon.create_client()
+    target_instances_count = app_def['instances']
+    client.add_app(app_def)
+
+    shakedown.deployment_wait(timeout=timedelta(minutes=1).total_seconds(), app_id=app_def['id'])
+
+    app = client.get_app(app_def["id"])
+    assert app['tasksRunning'] == target_instances_count, \
+        "The number of running tasks is {}, but {} was expected".format(app['tasksRunning'], target_instances_count)
+    assert app['tasksHealthy'] == target_instances_count, \
+        "The number of healthy tasks is {}, but {} was expected".format(app['tasksHealthy'], target_instances_count)
+
+    client.remove_app(app['id'], True)

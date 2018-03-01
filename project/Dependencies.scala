@@ -56,6 +56,7 @@ object Dependencies {
     commonsCompress % "compile", // used for tar flow
     commonsIO % "compile",
 
+
     // test
     Test.diffson % "test",
     Test.scalatest % "test",
@@ -83,10 +84,9 @@ object Dependency {
     val Alpakka  = "0.14"
     val Chaos = "0.10.0"
     val Guava = "20.0"
-    val Mesos = "1.5.0-SNAPSHOT"
+    val Mesos = "1.5.0"
     // Version of Mesos to use in Dockerfile.
-    val MesosDebian = "1.4.0-2.0.1"
-    val OpenJDK = "openjdk:8u121-jdk"
+    val MesosDebian = "1.5.0-2.0.1"
     val Akka = "2.5.7"
     val AkkaHttp = "10.0.11"
     val ApacheCommonsCompress = "1.13"
